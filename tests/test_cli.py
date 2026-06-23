@@ -160,6 +160,39 @@ def test_ci_baseline_never_gates(repo, tmp_path):
     assert code == 0
 
 
+def test_ci_broken_run_is_error(repo, tmp_path):
+    """A broken run (tests fail / no coverage file) exits 2 and reports an error.
+
+    Drives a broken run end-to-end through ``brimyr ci``: a test command that exits
+    non-zero and emits no coverage file. The exit code, the step outputs, and the
+    JSON artifact must all agree it is an *error* — never a misleading 0%/100% pass.
+    """
+    import json
+
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "python",
+            "--test-command",
+            "false",  # exits non-zero, produces no coverage.xml -> broken run
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+            "--quiet",
+        ]
+    )
+    assert code == 2
+    assert json.loads(out.read_text())["gate_result"] == "error"
+
+
 def test_json_out_written(repo, tmp_path):
     import json
 

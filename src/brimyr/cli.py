@@ -90,7 +90,8 @@ def counts_to_dict(decision: GateDecision) -> dict[str, object]:
         "total_lines": patch.total_lines,
         "missing_lines": patch.missing_lines,
         "threshold": decision.threshold,
-        "gate_result": "fail" if decision.failed else "pass",
+        # Mirror _emit_outputs: a broken run is an error, not a 0%/pass result.
+        "gate_result": "error" if decision.broken else ("fail" if decision.failed else "pass"),
         "files": [
             {
                 "path": f.path,
