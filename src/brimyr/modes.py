@@ -11,6 +11,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+# Both PR events gate, but wire Brimyr on ``pull_request``, not
+# ``pull_request_target``: Brimyr runs the PR's *own* test code, and
+# ``pull_request_target`` runs it with the base repo's write token + secrets — a
+# foothold for a malicious fork. ``pull_request_target`` is recognised here only so
+# an existing setup still gates. See the security note in docs/setup.md.
 _PR_EVENTS = {"pull_request", "pull_request_target"}
 
 

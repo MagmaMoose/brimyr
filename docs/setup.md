@@ -30,6 +30,13 @@ On PRs it runs your tests with coverage, gates on patch coverage, and (if
 non-gating baseline that still feeds the trend. Reusable workflows are consumed by
 path, independent of the Marketplace listing.
 
+> **Wire it on `pull_request`, not `pull_request_target`.** Brimyr runs the PR's
+> *own* test code on the runner. `pull_request_target` runs that code with the base
+> repo's write token and secrets in scope, so a malicious fork could exfiltrate
+> them — exactly the privilege a coverage gate doesn't need. Both events gate if
+> Brimyr sees them, but `pull_request` is the safe default; only reach for
+> `pull_request_target` if you fully control who can open PRs.
+
 ## 2. Composite action
 
 ```yaml
