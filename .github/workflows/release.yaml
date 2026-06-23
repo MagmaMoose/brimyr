@@ -97,6 +97,7 @@ jobs:
       - name: Trust the MagmaMoose tap
         run: brew trust --tap magmamoose/tap
       - name: Bump brimyr formula in the tap
+        # Pinned to the v7 commit; upstream ships major-only tags (no vX.Y.Z to pin).
         uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
