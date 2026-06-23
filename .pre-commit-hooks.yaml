@@ -1,0 +1,25 @@
+# Brimyr pre-commit hook — a local pre-push patch-coverage check.
+#
+# Add to a consumer .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/MagmaMoose/brimyr
+#       rev: v1.0.0            # pin to a tag/SHA
+#       hooks:
+#         - id: brimyr
+#
+# language: python — pre-commit builds an isolated venv and installs the brimyr
+# CLI from this repo (no Docker required locally). It runs at **pre-push** (not
+# pre-commit): patch coverage means running the test suite, which is too heavy for
+# every commit but fine before a push. It detects the ecosystem, runs the tests
+# with coverage, and gates the changes on your branch against the default branch —
+# the same check CI runs, so you catch a coverage shortfall before you push.
+- id: brimyr
+  name: Brimyr (patch-coverage gate)
+  description: Run tests with coverage and gate the branch's changed lines before pushing.
+  entry: brimyr local
+  language: python
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  stages: [pre-push]

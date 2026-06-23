@@ -1,0 +1,107 @@
+# Brimyr release — single-environment Trunk-Based Development (mono-env).
+#
+# Flow (one long-lived branch: main):
+#   push to main → python-semantic-release computes the next STABLE version from
+#                  conventional commits since the last tag, bumps pyproject.toml +
+#                  src/brimyr/__init__.py, updates CHANGELOG.md, tags vX.Y.Z, and
+#                  publishes the GitHub Release.
+#   then         → the floating major action tag (v1, v2, ...) is force-moved onto
+#                  the new release, so consumers pinning magmamoose/brimyr@v1 (or
+#                  `rev: v1` in .pre-commit-config) track the latest stable v1.x.
+#   finally      → the bump-homebrew job opens a PR on MagmaMoose/homebrew-tap
+#                  bumping the brimyr formula to the new tag — event-driven, so the
+#                  tap no longer needs to poll for new versions on a cron.
+#
+# brimyr is a composite action + Python CLI (no Docker image), so this is a
+# version-only release — it mirrors how Chargate and Diatreme self-release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', '.gitignore', 'LICENSE', 'CHANGELOG.md']
+  workflow_dispatch:
+    inputs:
+      version-override:
+        description: 'Explicit version e.g. 1.0.0. Blank = auto-compute from commits; required to force a release when there are no feat/fix/perf commits.'
+        required: false
+        default: ''
+
+# Serialize releases per ref so two pushes to main can't race the tag write.
+# Never cancel a release mid-flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # PSR commits the version bump + the major-tag step force-pushes
+      id-token: write   # OIDC for the Diatreme public-app token broker
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - id: release
+        uses: magmamoose/diatreme@c45671a0de1a88fa33db635fb8dbb67cb43fe227 # v1.30.0
+        with:
+          mode: release
+          versioning-tool: semantic-release-python
+          environment: prod
+          environments: '["prod"]'
+          prerelease-identifiers: '{}'
+          version-override: ${{ github.event_name == 'workflow_dispatch' && inputs.version-override || '' }}
+
+      # brimyr is consumed by floating major tag (magmamoose/brimyr@v1); move it
+      # onto each stable release. Uses GITHUB_TOKEN — if a tag ruleset blocks it,
+      # grant the token bypass or swap in a Diatreme/PAT token here.
+      - name: Update floating major action tag
+        if: steps.release.outputs.released == 'true' && !contains(steps.release.outputs.version, '-')
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          prefix="${RELEASE_TAG%"${RELEASE_VERSION}"}"
+          major="${RELEASE_VERSION%%.*}"
+          major_tag="${prefix}${major}"
+          target_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+
+          git config user.name "semantic-release"
+          git config user.email "semantic-release@users.noreply.github.com"
+          git tag -f "${major_tag}" "${target_commit}"
+          git push \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/${major_tag}" \
+            --force
+
+  # Event-driven Homebrew bump: when a stable release is cut, open a PR on the tap
+  # bumping the brimyr formula to the new tag (url + sha256 recomputed). This
+  # replaces polling the tap on a cron. Requires HOMEBREW_TAP_TOKEN — a fine-grained
+  # PAT on MagmaMoose/homebrew-tap with Contents + Pull requests: write.
+  bump-homebrew:
+    needs: release
+    if: needs.release.outputs.released == 'true' && !contains(needs.release.outputs.version, '-')
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Trust the MagmaMoose tap
+        run: brew trust --tap magmamoose/tap
+      - name: Bump brimyr formula in the tap
+        # Pinned to the v7 commit; upstream ships major-only tags (no vX.Y.Z to pin).
+        uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          tap: MagmaMoose/homebrew-tap
+          formula: brimyr
+          tag: ${{ needs.release.outputs.tag }}
+          no_fork: true   # push the bump branch straight to the tap (don't fork)

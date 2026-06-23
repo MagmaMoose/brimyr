@@ -1,0 +1,186 @@
+name: 'Brimyr'
+description: 'Patch-coverage gate: run tests with coverage and gate on the coverage of the lines a PR changed.'
+author: 'Caleb Sargeant'
+branding:
+  icon: 'umbrella'
+  color: 'purple'
+
+inputs:
+  # ── Checkout ─────────────────────────────────────────────────────────────
+  checkout:
+    description: 'Run actions/checkout first. Patch coverage needs full history (fetch-depth 0).'
+    required: false
+    default: 'true'
+  fetch_depth:
+    description: 'Checkout fetch-depth. MUST be 0 for patch coverage (merge-base).'
+    required: false
+    default: '0'
+
+  # ── Gate behaviour ───────────────────────────────────────────────────────
+  mode:
+    description: 'auto | pr (patch-coverage gate) | baseline (trend only, no gate).'
+    required: false
+    default: 'auto'
+  threshold:
+    description: 'Patch-coverage threshold (%) that blocks below it.'
+    required: false
+    default: '80'
+  base_ref:
+    description: 'Override the base ref/SHA (default: PR base SHA from the event).'
+    required: false
+    default: ''
+  head_ref:
+    description: 'Override the head ref/SHA (default: PR head SHA, else github.sha).'
+    required: false
+    default: ''
+  strip_prefix:
+    description: 'Comma-separated path prefixes to strip from coverage paths before matching.'
+    required: false
+    default: ''
+
+  # ── Test run / coverage ──────────────────────────────────────────────────
+  ecosystem:
+    description: 'Force ecosystem(s): comma-separated python|javascript|dotnet (default: auto-detect).'
+    required: false
+    default: ''
+  test_command:
+    description: 'Override the detected test command (a shell command string).'
+    required: false
+    default: ''
+  coverage_file:
+    description: 'Escape hatch: ingest pre-made coverage file(s) "path[:format]", comma-separated, instead of running tests.'
+    required: false
+    default: ''
+
+  # ── SonarQube (optional, non-blocking) ───────────────────────────────────
+  sonar_url:
+    description: 'SonarQube host URL. Set to run a non-blocking sonar-scanner pass.'
+    required: false
+    default: ''
+  sonar_token:
+    description: 'SonarQube token (pass a secret). Used only if sonar_url is set.'
+    required: false
+    default: ''
+  sonar_project_key:
+    description: 'Sonar project key.'
+    required: false
+    default: ''
+  sonar_organization:
+    description: 'Sonar organization (SonarCloud).'
+    required: false
+    default: ''
+
+  # ── Output ───────────────────────────────────────────────────────────────
+  emit_json_artifact:
+    description: 'Upload the patch-coverage JSON summary as a build artifact.'
+    required: false
+    default: 'true'
+  json_artifact_name:
+    description: 'Artifact name for the patch-coverage JSON summary.'
+    required: false
+    default: 'brimyr-coverage'
+
+  python_version:
+    description: 'Python version used to run the brimyr CLI.'
+    required: false
+    default: '3.12'
+
+outputs:
+  mode:
+    description: 'Resolved run mode (pr | baseline).'
+    value: ${{ steps.brimyr.outputs.mode }}
+  gate_result:
+    description: 'pass | fail | error.'
+    value: ${{ steps.brimyr.outputs.gate_result }}
+  patch_coverage:
+    description: 'Patch coverage percentage (covered changed executable lines / total).'
+    value: ${{ steps.brimyr.outputs.patch_coverage }}
+  covered_lines:
+    description: 'Covered changed executable lines.'
+    value: ${{ steps.brimyr.outputs.covered_lines }}
+  total_lines:
+    description: 'Total changed executable lines (the patch-coverage denominator).'
+    value: ${{ steps.brimyr.outputs.total_lines }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      if: ${{ inputs.checkout == 'true' }}
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      with:
+        fetch-depth: ${{ inputs.fetch_depth }}
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install brimyr
+      shell: bash
+      run: python -m pip install --disable-pip-version-check --quiet "$GITHUB_ACTION_PATH"
+
+    - name: Brimyr gate
+      id: brimyr
+      shell: bash
+      env:
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+        BASE_REF_IN: ${{ inputs.base_ref }}
+        HEAD_REF_IN: ${{ inputs.head_ref }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GH_SHA: ${{ github.sha }}
+        # All inputs flow through env (never interpolated into the script body)
+        # so a malicious value can't break out of the shell — defense-in-depth
+        # against `${{ }}` template injection.
+        MODE_IN: ${{ inputs.mode }}
+        THRESHOLD_IN: ${{ inputs.threshold }}
+        STRIP_PREFIX_IN: ${{ inputs.strip_prefix }}
+        ECOSYSTEM_IN: ${{ inputs.ecosystem }}
+        TEST_COMMAND_IN: ${{ inputs.test_command }}
+        COVERAGE_FILE_IN: ${{ inputs.coverage_file }}
+        SONAR_URL_IN: ${{ inputs.sonar_url }}
+        SONAR_PROJECT_KEY_IN: ${{ inputs.sonar_project_key }}
+        SONAR_ORG_IN: ${{ inputs.sonar_organization }}
+      run: |
+        set -euo pipefail
+        json_rel="brimyr-reports/coverage.json"
+        json_abs="${GITHUB_WORKSPACE:-$PWD}/$json_rel"
+        mkdir -p "$(dirname "$json_abs")"
+        echo "json_path=$json_rel" >> "$GITHUB_OUTPUT"
+
+        base="${BASE_REF_IN:-$PR_BASE_SHA}"
+        head="${HEAD_REF_IN:-${PR_HEAD_SHA:-$GH_SHA}}"
+
+        args=(ci
+          --mode "$MODE_IN"
+          --threshold "$THRESHOLD_IN"
+          --repo "."
+          --head "$head"
+          --json-out "$json_abs")
+        [ -n "$base" ] && args+=(--base "$base")
+        [ -n "$TEST_COMMAND_IN" ] && args+=(--test-command "$TEST_COMMAND_IN")
+
+        IFS=',' read -ra _eco <<< "$ECOSYSTEM_IN"
+        for e in "${_eco[@]}"; do [ -n "$e" ] && args+=(--ecosystem "$e"); done
+        IFS=',' read -ra _cov <<< "$COVERAGE_FILE_IN"
+        for c in "${_cov[@]}"; do [ -n "$c" ] && args+=(--coverage-file "$c"); done
+        IFS=',' read -ra _sp <<< "$STRIP_PREFIX_IN"
+        for p in "${_sp[@]}"; do [ -n "$p" ] && args+=(--strip-prefix "$p"); done
+
+        if [ -n "$SONAR_URL_IN" ]; then
+          args+=(--sonar-url "$SONAR_URL_IN")
+          [ -n "$SONAR_PROJECT_KEY_IN" ] && args+=(--sonar-project-key "$SONAR_PROJECT_KEY_IN")
+          [ -n "$SONAR_ORG_IN" ] && args+=(--sonar-organization "$SONAR_ORG_IN")
+        fi
+
+        brimyr "${args[@]}"
+
+    - name: Upload coverage JSON artifact
+      if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.json_path != '' && hashFiles(steps.brimyr.outputs.json_path) != '' }}
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.json_artifact_name }}
+        path: ${{ steps.brimyr.outputs.json_path }}
