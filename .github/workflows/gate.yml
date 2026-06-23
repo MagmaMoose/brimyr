@@ -1,0 +1,107 @@
+name: Brimyr gate
+
+# Reusable workflow — a consumer's whole config is ~one job block:
+#
+#   jobs:
+#     coverage:
+#       uses: magmamoose/brimyr/.github/workflows/gate.yml@v1
+#       with:
+#         setup: pip install -e '.[test]'   # install your test deps first
+#       secrets:
+#         sonar_token: ${{ secrets.SONAR_TOKEN }}   # optional
+#
+# Brimyr runs the repo's tests on the runner, so the test toolchain + deps must be
+# present. Use `setup` to install them (npm ci, pip install, dotnet restore, …),
+# or feed a pre-made report via `coverage_file` and skip the run entirely.
+# Consumed by path, so it is independent of the Marketplace listing.
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'auto | pr | baseline'
+        type: string
+        default: 'auto'
+      threshold:
+        description: 'Patch-coverage threshold (%) that blocks below it.'
+        type: string
+        default: '80'
+      setup:
+        description: 'Shell command to run before the gate (install test deps / toolchain).'
+        type: string
+        default: ''
+      ecosystem:
+        description: 'Force ecosystem(s): comma-separated python|javascript|dotnet.'
+        type: string
+        default: ''
+      test_command:
+        description: 'Override the detected test command.'
+        type: string
+        default: ''
+      coverage_file:
+        description: 'Ingest pre-made coverage file(s) "path[:format]", comma-separated, instead of running tests.'
+        type: string
+        default: ''
+      sonar_url:
+        description: 'SonarQube host URL (enables a non-blocking sonar-scanner run).'
+        type: string
+        default: ''
+      sonar_project_key:
+        type: string
+        default: ''
+      sonar_organization:
+        type: string
+        default: ''
+      python_version:
+        type: string
+        default: '3.12'
+      runs_on:
+        type: string
+        default: 'ubuntu-latest'
+    secrets:
+      sonar_token:
+        description: 'SonarQube token (only needed if sonar_url is set).'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  brimyr:
+    runs-on: ${{ inputs.runs_on }}
+    steps:
+      # Check out the CONSUMER repo with full history (patch coverage needs the merge-base).
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      # Install the consumer's test toolchain / dependencies before the gate runs.
+      - name: Setup
+        if: ${{ inputs.setup != '' }}
+        shell: bash
+        run: ${{ inputs.setup }}
+      # Check out the brimyr action at THIS workflow's exact commit, then call it by
+      # local path. This avoids pinning a self-reference (the action version always
+      # matches the gate.yml version a consumer pinned) and is unaffected by
+      # SHA-pinning hooks.
+      - name: Fetch brimyr action
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: MagmaMoose/brimyr
+          ref: ${{ github.job_workflow_sha }}
+          path: ._brimyr_action
+      - name: Brimyr
+        uses: ./._brimyr_action
+        with:
+          checkout: 'false'
+          mode: ${{ inputs.mode }}
+          threshold: ${{ inputs.threshold }}
+          ecosystem: ${{ inputs.ecosystem }}
+          test_command: ${{ inputs.test_command }}
+          coverage_file: ${{ inputs.coverage_file }}
+          sonar_url: ${{ inputs.sonar_url }}
+          sonar_project_key: ${{ inputs.sonar_project_key }}
+          sonar_organization: ${{ inputs.sonar_organization }}
+          sonar_token: ${{ secrets.sonar_token }}
+          python_version: ${{ inputs.python_version }}

@@ -1,0 +1,74 @@
+[project]
+name = "brimyr"
+version = "0.1.0"
+description = "Patch-coverage gate: auto-detect the repo's ecosystem, run tests with coverage, and gate on the coverage of the lines this PR changed (diff-cover style)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Caleb Sargeant", email = "caleb@magmamoose.com" }]
+keywords = ["coverage", "patch-coverage", "diff-cover", "sonarqube", "gate", "lcov", "cobertura"]
+# The patch-coverage core is intentionally stdlib-only so it stays trivially
+# testable and the package stays light: lcov is parsed by hand and Cobertura via
+# xml.etree. There is no runtime dependency.
+dependencies = []
+
+[project.scripts]
+brimyr = "brimyr.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MagmaMoose/brimyr"
+Source = "https://github.com/MagmaMoose/brimyr"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/brimyr"]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+# Docs tooling (non-default group): `uv run --group docs mkdocs serve|build`.
+docs = ["mkdocs-material>=9.5"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+# python-semantic-release (driven by Diatreme on release; see
+# .github/workflows/release.yaml). PSR computes the next stable version from
+# conventional commits since the last tag and writes it to BOTH locations below,
+# so the hatchling package version and `brimyr version` stay in lockstep — do
+# not bump these by hand.
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["src/brimyr/__init__.py:__version__"]
+build_command = ""          # version-only release: a git tag + GitHub Release, no PyPI build
+major_on_zero = false
+tag_format = "v{version}"
+commit_message = "chore(release): v{version}"
+
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+prerelease = false          # Diatreme controls prerelease via its inputs, not here
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+exclude_commit_patterns = []
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.remote]
+type = "github"
