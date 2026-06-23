@@ -18,10 +18,33 @@ def test_detect_python(tmp_path):
 
 
 def test_detect_javascript(tmp_path):
-    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
     found = detect_ecosystems(tmp_path)
     assert [e.key for e in found] == ["javascript"]
     assert found[0].coverage_format is CoverageFormat.LCOV
+
+
+def test_detect_javascript_by_jest_config(tmp_path):
+    # A jest/vitest config is a real test signal even without a test script.
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "jest.config.ts").write_text("export default {}\n")
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["javascript"]
+
+
+def test_bare_package_json_not_javascript(tmp_path):
+    # A package.json with no test script / config — common for a backend that just
+    # ships frontend assets — must NOT be detected as JS (no jest run on a red herring).
+    (tmp_path / "package.json").write_text('{"dependencies": {"react": "^18"}}')
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_placeholder_test_script_not_javascript(tmp_path):
+    # The `npm init` default placeholder is not a real test setup.
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1"}}'
+    )
+    assert detect_ecosystems(tmp_path) == []
 
 
 def test_detect_dotnet_by_glob(tmp_path):
@@ -32,7 +55,7 @@ def test_detect_dotnet_by_glob(tmp_path):
 
 def test_detect_polyglot(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[project]\n")
-    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
     found = detect_ecosystems(tmp_path)
     assert {e.key for e in found} == {"python", "javascript"}
 
