@@ -44,7 +44,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -98,7 +98,7 @@ jobs:
         run: brew trust --tap magmamoose/tap
       - name: Bump brimyr formula in the tap
         # Pinned to the v7 commit; upstream ships major-only tags (no vX.Y.Z to pin).
-        uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
+        uses: dawidd6/action-homebrew-bump-formula@a0e064e08103c01870c6d1b05168d1b726aab119 # v8
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           tap: MagmaMoose/homebrew-tap
