@@ -19,7 +19,13 @@ permissions:
 
 jobs:
   chargate:
-    runs-on: ubuntu-latest
+    # Per-repo runner toggle, shared with the release (Diatreme) workflow.
+    # Set the SELFHOSTED_GITHUB_RUNNER variable to a self-hosted runner label
+    # to route this repo's managed workflows to a cluster pool — free minutes
+    # and a warm MegaLinter image. Leave it unset/blank to stay on
+    # GitHub-hosted; blanking it is also the instant escape hatch if the
+    # self-hosted runners bomb out.
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: magmamoose/chargate@699a2b0a62c9a1ecd41fa0295a9d27a9037ac30e # v2.3.0
         with:

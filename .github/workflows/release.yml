@@ -44,7 +44,10 @@ concurrency:
 
 jobs:
   diatreme:
-    runs-on: ubuntu-latest
+    # Shares the repo's SELFHOSTED_GITHUB_RUNNER toggle (see security.yml):
+    # set it to a self-hosted runner label to run releases on the cluster pool,
+    # unset/blank to stay on GitHub-hosted.
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - id: detect
