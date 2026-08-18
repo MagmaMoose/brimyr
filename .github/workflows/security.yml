@@ -1,12 +1,16 @@
 # Org Chargate security gate (MegaLinter-backed, net-new PR-diff gating), consumed
-# as the Chargate MARKETPLACE ACTION. On PRs it gates on net-new findings; on push
-# to the default branch it runs a non-gating baseline scan and ships the full SARIF.
+# as the Chargate MARKETPLACE ACTION. It gates on net-new findings on pull requests.
+#
+# pull_request only: the push-to-default baseline scan was dropped. Every merge to
+# the default branch (including the Caldrith-managed and Diatreme version-bump/tag
+# commits) otherwise kicks off a full ~15-min MegaLinter run — the single biggest
+# source of wasted CI. PR-time net-new gating is retained; the default-branch
+# baseline SARIF on the Security tab is simply no longer refreshed (it needs GHAS on
+# private repos anyway, and the code_scanning ruleset gate is CodeQL, not chargate).
 name: Security
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -19,11 +23,20 @@ permissions:
 
 jobs:
   chargate:
+    # Runner routing, rendered by visibility — see `template_vars` at the top of
+    # settings.yml. `runs_on_amd64`, NOT `runs_on`: Chargate is amd64-only in
+    # practice (arm64 runs MegaLinter's per-linter images sequentially and the job
+    # never finishes — see the note on the var). Public repos get a literal
+    # `ubuntu-latest` (GitHub-hosted minutes are free on public repos, and this
+    # keeps them out of the self-hosted queue); private/internal repos get the
+    # amd64-pinned expression,
+    # so blanking that variable is still the instant escape hatch if the
+    # self-hosted runners bomb out.
     runs-on: ubuntu-latest
     steps:
-      - uses: magmamoose/chargate@699a2b0a62c9a1ecd41fa0295a9d27a9037ac30e # v2.3.0
+      - uses: magmamoose/chargate@13239654c6395322b0698720f0f7cfc4c2f7e40e # v2.11.10
         with:
           defectdojo_url: ${{ vars.MM_DEFECTDOJO_URL }}
           defectdojo_token: ${{ secrets.MM_DEFECTDOJO_API_KEY }}
           dependency_track_url: ${{ vars.MM_DEPENDENCY_TRACK_URL }}
-          dependency_track_token: ${{ secrets.MM_DEPENDENCY_TRACK_API_KEY }}
+          dependency_track_api_key: ${{ secrets.MM_DEPENDENCY_TRACK_API_KEY }}
