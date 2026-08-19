@@ -26,7 +26,7 @@ wheels = [
 
 [[package]]
 name = "brimyr"
-version = "1.0.2"
+version = "1.0.4"
 source = { editable = "." }
 
 [package.dev-dependencies]
@@ -44,7 +44,7 @@ docs = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]
 docs = [{ name = "mkdocs-material", specifier = ">=9.5" }]

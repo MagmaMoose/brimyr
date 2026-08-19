@@ -25,6 +25,7 @@ from pathlib import Path
 
 from brimyr import __version__
 from brimyr import git as bgit
+from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
 from brimyr import sonar as sonar_mod
 from brimyr.coverage.diff import DiffIndex
@@ -253,6 +254,38 @@ def _maybe_run_sonar(
     return result.message
 
 
+def _maybe_post_comment(args: argparse.Namespace, summary: str) -> str | None:
+    """Post the PR comment when asked. Failure-isolated: never changes the verdict."""
+    if not getattr(args, "pr_comment", False):
+        return None
+
+    slug = args.repo_slug or os.environ.get("GITHUB_REPOSITORY", "")
+    number = args.pr_number if args.pr_number else _pr_number_from_event()
+    config = comment_mod.CommentConfig(
+        base_url=args.github_api_url
+        or os.environ.get("GITHUB_API_URL")
+        or "https://api.github.com",
+        repo_slug=slug,
+        pr_number=number or 0,
+        token=os.environ.get(args.github_token_env, ""),
+    )
+    return comment_mod.post_pr_comment(config, summary).message
+
+
+def _pr_number_from_event() -> int:
+    """Read the PR number out of the Actions event payload, 0 when there isn't one."""
+    path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path:
+        return 0
+    try:
+        with open(path, encoding="utf-8") as handle:
+            event = json.load(handle)
+    except (OSError, ValueError):
+        return 0
+    number = (event.get("pull_request") or {}).get("number")
+    return number if isinstance(number, int) else 0
+
+
 def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
     collected = _collect_coverage(args)
     if isinstance(collected, int):
@@ -290,7 +323,10 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
         decision, mode, broken=broken, ecosystems=ecosystems, sonar_message=sonar_message
     )
     report_mod.append_step_summary(summary)
+    comment_message = _maybe_post_comment(args, summary)
     if not args.quiet:
+        if comment_message:
+            _eprint(f"brimyr: {comment_message}")
         _print_summary(decision, broken=broken)
         if sonar_message:
             _eprint(f"brimyr: SonarQube: {sonar_message}")
@@ -363,6 +399,26 @@ def _add_sonar_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_comment_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--pr-comment",
+        action="store_true",
+        help="Post/update one patch-coverage comment on the PR (non-blocking).",
+    )
+    parser.add_argument(
+        "--github-token-env",
+        default="GITHUB_TOKEN",
+        help="Env var holding the token used to comment (default: GITHUB_TOKEN).",
+    )
+    parser.add_argument("--repo-slug", help="owner/repo (default: $GITHUB_REPOSITORY).")
+    parser.add_argument("--pr-number", type=int, help="PR number (default: from the event).")
+    parser.add_argument(
+        "--github-api-url",
+        default="",
+        help="GitHub API base URL (default: $GITHUB_API_URL, else api.github.com).",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brimyr",
@@ -424,6 +480,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the detected test command (a shell command string).",
     )
     _add_sonar_args(ci)
+    _add_comment_args(ci)
     ci.set_defaults(func=cmd_ci)
 
     local = sub.add_parser(
@@ -445,6 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     local.add_argument("--test-command", help="Override the detected test command.")
     _add_sonar_args(local)
+    _add_comment_args(local)
     local.set_defaults(func=cmd_local)
 
     version = sub.add_parser("version", help="Print the brimyr version.")

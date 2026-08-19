@@ -33,6 +33,17 @@ inputs:
     description: 'Override the head ref/SHA (default: PR head SHA, else github.sha).'
     required: false
     default: ''
+  pr_comment:
+    description: 'Post/update one consolidated patch-coverage comment on the PR. Non-blocking.'
+    required: false
+    default: 'false'
+  github_token:
+    description: >-
+      Token used to comment. Needs `pull-requests: write`. Defaults to the job
+      GITHUB_TOKEN, which comments as github-actions[bot].
+    required: false
+    default: ${{ github.token }}
+
   strip_prefix:
     description: 'Comma-separated path prefixes to strip from coverage paths before matching.'
     required: false
@@ -143,6 +154,10 @@ runs:
         SONAR_URL_IN: ${{ inputs.sonar_url }}
         SONAR_PROJECT_KEY_IN: ${{ inputs.sonar_project_key }}
         SONAR_ORG_IN: ${{ inputs.sonar_organization }}
+        PR_COMMENT_IN: ${{ inputs.pr_comment }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER_IN: ${{ github.event.pull_request.number }}
       run: |
         set -euo pipefail
         json_rel="brimyr-reports/coverage.json"
@@ -173,6 +188,10 @@ runs:
           args+=(--sonar-url "$SONAR_URL_IN")
           [ -n "$SONAR_PROJECT_KEY_IN" ] && args+=(--sonar-project-key "$SONAR_PROJECT_KEY_IN")
           [ -n "$SONAR_ORG_IN" ] && args+=(--sonar-organization "$SONAR_ORG_IN")
+        fi
+
+        if [ "$PR_COMMENT_IN" = "true" ] && [ -n "${PR_NUMBER_IN:-}" ]; then
+          args+=(--pr-comment --pr-number "$PR_NUMBER_IN")
         fi
 
         brimyr "${args[@]}"
