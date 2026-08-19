@@ -45,6 +45,9 @@ extend-exclude = ["broker"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.bandit]
+exclude_dirs = ["broker/tests", "tests"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
