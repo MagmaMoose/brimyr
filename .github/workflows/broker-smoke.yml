@@ -40,6 +40,14 @@ permissions:
 
 jobs:
   smoke:
+    # One run per ref. Back-to-back pushes would otherwise stack independent smoke runs
+    # against the LIVE broker, and every run mints a real installation token and spends
+    # real API Gateway requests — small, but this is a bill paid out of one person's
+    # salary and the superseded run's answer is worthless anyway.
+    concurrency:
+      group: broker-smoke-${{ github.ref }}
+      cancel-in-progress: true
+
     # A pull request from a FORK gets a read-only token and no OIDC endpoint, so it cannot
     # mint by construction — and this repo is public, so fork PRs are expected. Running it
     # there would fail every one with "the job is missing id-token: write": noise, not
