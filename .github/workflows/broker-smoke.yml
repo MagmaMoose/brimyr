@@ -17,18 +17,21 @@
 # Not asserted here: the `execute_api_endpoint` 403. That URL is a Terraform output rather
 # than a constant, so it stays a one-off check at first apply (broker/README.md, step 5).
 #
-# GitHub disables scheduled workflows on a repository with 60 days of no activity. On a
-# repo this quiet that is a live failure mode, and a silently disabled smoke test is
-# exactly as useless as no smoke test — `workflow_dispatch` is the manual re-arm, and is
-# also how the go-live runbook drives this the first time.
+# NO CRON, deliberately. Scheduled workflows are the least reliable trigger GitHub has:
+# runs are silently dropped when the queue is busy, and the schedule is disabled outright
+# after 60 days of repository inactivity — on a repo this quiet, both are live failure
+# modes, and a smoke test that did not run is indistinguishable from the failure it exists
+# to catch. A green history that means "never ran" is worse than no history.
+#
+# So it runs on every pull request instead: a real trigger, tied to someone actually
+# watching. THE TRADE IS REAL AND WORTH STATING — a broker that breaks during a quiet week
+# now goes unnoticed until the next PR, where the cron would (in principle) have caught it
+# within seven days. `workflow_dispatch` covers that gap on demand, and is also how the
+# go-live runbook drives this the first time.
 name: Broker smoke
 
 on:
-  schedule:
-    # Mondays 07:23 UTC. Off the hour deliberately: GitHub queues every `0 * * * *` job in
-    # the world at once and silently drops runs it cannot place, and a smoke test that did
-    # not run is indistinguishable from the failure it exists to catch.
-    - cron: '23 7 * * 1'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -37,6 +40,14 @@ permissions:
 
 jobs:
   smoke:
+    # A pull request from a FORK gets a read-only token and no OIDC endpoint, so it cannot
+    # mint by construction — and this repo is public, so fork PRs are expected. Running it
+    # there would fail every one with "the job is missing id-token: write": noise, not
+    # signal, on the one workflow that has to stay trustworthy when it goes red.
+    # workflow_dispatch is unaffected by this condition.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # The broker is one Lambda behind one HTTP API. If this has not resolved in five
     # minutes something is wrong that a longer wait will not fix.
