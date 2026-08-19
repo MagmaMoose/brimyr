@@ -22,6 +22,7 @@ from exact to suffix matching. Pass extra ``strip_prefixes`` to peel known roots
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatch
 
 from brimyr.coverage.diff import DiffIndex, normalize_path
 from brimyr.coverage.model import CoverageReport, FileCoverage
@@ -37,6 +38,20 @@ class PatchPolicy:
     # When exact match fails, allow matching a coverage path that is a path-suffix
     # of the diff path (or vice versa). Handles absolute coverage paths.
     suffix_match: bool = True
+    # Changed files matching any of these globs are dropped from the DENOMINATOR
+    # entirely — they are not counted as covered, they simply do not count.
+    #
+    # This exists for GENERATED CODE, which is the common reason a real patch-coverage
+    # number is unusable: EF Core migrations, *ModelSnapshot, *.Designer.cs, generated
+    # Razor documents, protobuf/OpenAPI stubs. Nobody writes tests for them, they can be
+    # thousands of lines, and one scaffolded migration in a PR can sink an otherwise
+    # well-tested change below the threshold. Coverage tools have the same idea under
+    # different names (coverlet's `Exclude`, ReportGenerator's `-classfilters`).
+    #
+    # Matched against the repo-relative, forward-slash diff path, with `fnmatch`
+    # semantics where `*` also crosses `/` — so `*Migrations*` catches the folder at any
+    # depth, which is how people actually write these.
+    exclude_globs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -134,6 +149,19 @@ def _match(
     return best
 
 
+def _excluded(path: str, globs: tuple[str, ...]) -> bool:
+    """True when a changed file should not count toward patch coverage at all.
+
+    `fnmatch` rather than `Path.match`: `*` has to cross `/` so that `*Migrations*`
+    matches `src/Api/Migrations/0001_Init.cs` without the caller having to know how deep
+    the folder sits. Path.match anchors on components and would miss it.
+    """
+    if not globs:
+        return False
+    target = normalize_path(path)
+    return any(fnmatch(target, pattern) for pattern in globs)
+
+
 def compute_patch_coverage(
     diff: DiffIndex,
     report: CoverageReport,
@@ -148,6 +176,8 @@ def compute_patch_coverage(
     covered_total = 0
     for file_diff in diff.files:
         if file_diff.is_deleted:
+            continue
+        if _excluded(file_diff.path, policy.exclude_globs):
             continue
         file_cov = _match(file_diff.path, entries, suffix_match=policy.suffix_match)
         if file_cov is None:

@@ -164,16 +164,41 @@ def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
     ]
 
 
-def locate_coverage_file(eco: Ecosystem, repo: str | Path = ".") -> Path | None:
-    """Find the coverage file an ecosystem's run should have produced, or None."""
+def locate_coverage_files(eco: Ecosystem, repo: str | Path = ".") -> list[Path]:
+    """Every coverage file an ecosystem's run produced, in a deterministic order.
+
+    ALL of them, not the newest. `dotnet test` on a solution writes one
+    ``TestResults/<guid>/coverage.cobertura.xml`` PER TEST PROJECT, so a solution with
+    five test projects leaves five reports. Taking only the most recent one silently
+    drops the other four — and because :mod:`brimyr.coverage.patch` treats a file the
+    report never mentions as contributing nothing, every changed file belonging to a
+    dropped project vanishes from the denominator instead of failing loudly. The gate
+    then reports a comfortable, meaningless pass.
+
+    Sorted by path rather than mtime so two runs over the same tree merge identically;
+    ``merge_reports`` is covered-wins and order-independent, but a stable order keeps
+    the Sonar `reportPaths` list and any diagnostics reproducible.
+    """
     root = Path(repo)
+    found: list[Path] = []
     for pattern in eco.coverage_paths:
         if "*" in pattern or "?" in pattern:
-            matches = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-            if matches:
-                return matches[0]
+            found.extend(sorted(p for p in root.glob(pattern) if p.is_file()))
         else:
             candidate = root / pattern
             if candidate.is_file():
-                return candidate
-    return None
+                found.append(candidate)
+    # A pattern can overlap a literal path; keep first occurrence only.
+    seen: set[Path] = set()
+    return [p for p in found if not (p in seen or seen.add(p))]
+
+
+def locate_coverage_file(eco: Ecosystem, repo: str | Path = ".") -> Path | None:
+    """The first coverage file, or None. Prefer :func:`locate_coverage_files`.
+
+    Kept because a single path is genuinely the right answer for the single-report
+    ecosystems (pytest writes one coverage.xml, jest one lcov.info) and it keeps the
+    existing callers and tests meaningful.
+    """
+    files = locate_coverage_files(eco, repo)
+    return files[0] if files else None

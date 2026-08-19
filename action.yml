@@ -54,6 +54,17 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  exclude:
+    description: >-
+      Comma-separated globs whose matching CHANGED FILES are dropped from the
+      patch-coverage denominator entirely — they are not counted as covered, they simply
+      do not count. For generated code: EF Core migrations, *ModelSnapshot, *.Designer.cs,
+      generated Razor documents, protobuf/OpenAPI stubs. One scaffolded migration in a PR
+      can otherwise sink an otherwise well-tested change below the threshold.
+      e.g. "*Migrations*,*ModelSnapshot*,*.Designer.cs,*AspNetCoreGeneratedDocument*"
+    required: false
+    default: ''
+
   strip_prefix:
     description: 'Comma-separated path prefixes to strip from coverage paths before matching.'
     required: false
@@ -158,6 +169,7 @@ runs:
         MODE_IN: ${{ inputs.mode }}
         THRESHOLD_IN: ${{ inputs.threshold }}
         STRIP_PREFIX_IN: ${{ inputs.strip_prefix }}
+        EXCLUDE_IN: ${{ inputs.exclude }}
         ECOSYSTEM_IN: ${{ inputs.ecosystem }}
         TEST_COMMAND_IN: ${{ inputs.test_command }}
         COVERAGE_FILE_IN: ${{ inputs.coverage_file }}
@@ -194,6 +206,8 @@ runs:
         for c in "${_cov[@]}"; do [ -n "$c" ] && args+=(--coverage-file "$c"); done
         IFS=',' read -ra _sp <<< "$STRIP_PREFIX_IN"
         for p in "${_sp[@]}"; do [ -n "$p" ] && args+=(--strip-prefix "$p"); done
+        IFS=',' read -ra _ex <<< "$EXCLUDE_IN"
+        for e in "${_ex[@]}"; do [ -n "$e" ] && args+=(--exclude "$e"); done
 
         if [ -n "$SONAR_URL_IN" ]; then
           args+=(--sonar-url "$SONAR_URL_IN")
