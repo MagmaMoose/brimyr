@@ -44,7 +44,7 @@ def _call(
         request.add_header("Content-Type", "application/json")
 
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             status, payload = response.status, response.read().decode()
     except urllib.error.HTTPError as exc:
         status, payload = exc.code, exc.read().decode()

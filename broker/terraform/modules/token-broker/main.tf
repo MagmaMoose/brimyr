@@ -90,15 +90,18 @@ resource "aws_iam_role_policy" "lambda" {
   policy = data.aws_iam_policy_document.lambda.json
 }
 
+#trivy:ignore:AWS-0017
 resource "aws_cloudwatch_log_group" "lambda" {
   name = "/aws/lambda/${var.name_prefix}"
   # LocalStack accepts retention_in_days but does not enforce it; setting it there just
   # produces a perpetual diff.
   retention_in_days = var.localstack ? null : var.log_retention_days
+  #checkov:skip=CKV_AWS_158:KMS-encrypted log groups cost ~$1/mo per CMK; CloudWatch-managed encryption accepted on a personally-funded account.
 }
 
 # ── Function ──────────────────────────────────────────────────────────────────────────
 
+#trivy:ignore:AWS-0066
 resource "aws_lambda_function" "broker" {
   function_name = var.name_prefix
   role          = aws_iam_role.lambda.arn
@@ -114,6 +117,10 @@ resource "aws_lambda_function" "broker" {
   memory_size = 512
   timeout     = 20
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       # Secrets are NOT here. Anything holding lambda:GetFunctionConfiguration could read
@@ -125,6 +132,12 @@ resource "aws_lambda_function" "broker" {
       ALLOWED_REPOSITORIES   = var.allowed_repositories
     }
   }
+
+  #checkov:skip=CKV_AWS_173:Env vars are policy-only (paths, audience, permissions). Secrets come from SSM, never from function config.
+  #checkov:skip=CKV_AWS_116:Synchronous HTTP API invocation — DLQs apply only to async invocations where the caller cannot receive the failure.
+  #checkov:skip=CKV_AWS_272:Code-signing requires a dedicated Signer profile; not provisioned on a personally-funded account.
+  #checkov:skip=CKV_AWS_115:Concurrency is bounded by the API Gateway stage throttle (throttle_burst_limit/rate_limit); a per-function reserved limit would conflict with it.
+  #checkov:skip=CKV_AWS_117:Public webhook receiver — placing it in a VPC requires a NAT gateway (~$32/mo) on a personally-funded account.
 
   depends_on = [aws_iam_role_policy.lambda, aws_cloudwatch_log_group.lambda]
 }
@@ -156,8 +169,10 @@ resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.broker.id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.broker.id}"
+  #checkov:skip=CKV_AWS_309:Authorization is enforced in-function (OIDC signature, issuer pin, audience). An API Gateway authorizer would replicate that check at extra cost.
 }
 
+#trivy:ignore:AWS-0001
 resource "aws_apigatewayv2_stage" "default" {
   api_id = aws_apigatewayv2_api.broker.id
   # $default puts no stage prefix in the path, which is what lets rawPath be the real
@@ -169,6 +184,8 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_burst_limit = var.throttle_burst_limit
     throttling_rate_limit  = var.throttle_rate_limit
   }
+
+  #checkov:skip=CKV_AWS_76:API Gateway V2 access logs require an account-level IAM role for API Gateway (aws_api_gateway_account), which is outside this module's scope.
 }
 
 resource "aws_lambda_permission" "api" {

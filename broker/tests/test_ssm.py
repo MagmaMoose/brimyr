@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -47,7 +47,7 @@ def test_parameter_names_become_config_field_names(monkeypatch):
         ]
     )
     _install(monkeypatch, fake)
-    assert ssm.secrets("/brimyr/prod") == {"app_id": "123", "private_key": "pem"}
+    assert ssm.secrets("/brimyr/prod") == {"app_id": "123", "private_key": "pem"}  # nosec B101
 
 
 def test_decryption_is_requested(monkeypatch):
@@ -55,8 +55,8 @@ def test_decryption_is_requested(monkeypatch):
     fake = _FakeSsm([{"Parameters": []}])
     _install(monkeypatch, fake)
     ssm.secrets("/brimyr/prod")
-    assert fake.calls[0]["WithDecryption"] is True
-    assert fake.calls[0]["Recursive"] is True
+    assert fake.calls[0]["WithDecryption"] is True  # nosec B101
+    assert fake.calls[0]["Recursive"] is True  # nosec B101
 
 
 def test_second_call_is_served_from_cache(monkeypatch):
@@ -64,7 +64,7 @@ def test_second_call_is_served_from_cache(monkeypatch):
     _install(monkeypatch, fake)
     ssm.secrets("/x")
     ssm.secrets("/x")
-    assert len(fake.calls) == 1
+    assert len(fake.calls) == 1  # nosec B101
 
 
 def test_pagination_follows_next_token(monkeypatch):
@@ -77,9 +77,9 @@ def test_pagination_follows_next_token(monkeypatch):
         ]
     )
     _install(monkeypatch, fake)
-    assert ssm.secrets("/x") == {"app_id": "1", "private_key": "pem"}
-    assert len(fake.calls) == 2
-    assert fake.calls[1]["NextToken"] == "more"
+    assert ssm.secrets("/x") == {"app_id": "1", "private_key": "pem"}  # nosec B101
+    assert len(fake.calls) == 2  # nosec B101
+    assert fake.calls[1]["NextToken"] == "more"  # nosec B101
 
 
 def test_failure_is_negative_cached_then_retried(monkeypatch):
@@ -101,19 +101,19 @@ def test_failure_is_negative_cached_then_retried(monkeypatch):
 
     with pytest.raises(RuntimeError):
         ssm.secrets("/x")
-    assert attempts["n"] == 1
+    assert attempts["n"] == 1  # nosec B101
 
     # Inside the window: refused without touching AWS.
     clock["t"] += ssm.NEGATIVE_TTL_SECONDS / 2
     with pytest.raises(RuntimeError):
         ssm.secrets("/x")
-    assert attempts["n"] == 1
+    assert attempts["n"] == 1  # nosec B101
 
     # Past the window: retried, so a late-seeded parameter recovers with no redeploy.
     clock["t"] += ssm.NEGATIVE_TTL_SECONDS
     with pytest.raises(RuntimeError):
         ssm.secrets("/x")
-    assert attempts["n"] == 2
+    assert attempts["n"] == 2  # nosec B101
 
 
 def test_importing_the_module_does_not_import_boto3():
@@ -124,11 +124,11 @@ def test_importing_the_module_does_not_import_boto3():
     does not quietly rely on what the Lambda runtime happens to supply.
     """
     broker_root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603
         [sys.executable, "-c", "import app.ssm, sys; print('boto3' in sys.modules)"],
         cwd=broker_root,
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result.stdout.strip() == "False"
+    assert result.stdout.strip() == "False"  # nosec B101

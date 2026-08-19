@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SECRET_PATH="${1:-/brimyr/local}"
-ENDPOINT="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+ENDPOINT="${AWS_ENDPOINT_URL:-http://localhost:4566}"  # DevSkim: ignore DS162092
 
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
 export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"

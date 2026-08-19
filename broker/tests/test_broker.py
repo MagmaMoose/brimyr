@@ -75,18 +75,18 @@ async def _call(body: dict | str, config, key=None, transport=None):
 async def test_malformed_json_is_answered_before_config_is_consulted():
     """A caller who sent nonsense is told so even on a broker that was never finished."""
     status, body = await handle_token(b"not json", config=None)
-    assert (status, body["error"]) == (400, "invalid_json")
+    assert (status, body["error"]) == (400, "invalid_json")  # nosec B101
 
 
 async def test_missing_fields(config):
     status, body = await _call({"owner": "MagmaMoose"}, config)
-    assert (status, body["error"]) == (400, "missing_fields")
+    assert (status, body["error"]) == (400, "missing_fields")  # nosec B101
 
 
 @pytest.mark.parametrize("repo", ["../../etc/passwd", "a/b", "with%2Fescape", ".."])
 async def test_repository_that_could_steer_a_url_is_rejected(config, repo):
     status, body = await _call({"oidcToken": "x", "owner": "MagmaMoose", "repo": repo}, config)
-    assert (status, body["error"]) == (400, "invalid_repository")
+    assert (status, body["error"]) == (400, "invalid_repository")  # nosec B101
 
 
 async def test_unsigned_token_is_invalid_oidc(config, keypair):
@@ -94,7 +94,7 @@ async def test_unsigned_token_is_invalid_oidc(config, keypair):
     status, body = await _call(
         {"oidcToken": "not.a.token", "owner": "MagmaMoose", "repo": "brimyr"}, config, key
     )
-    assert (status, body["error"]) == (401, "invalid_oidc")
+    assert (status, body["error"]) == (401, "invalid_oidc")  # nosec B101
 
 
 async def test_wrong_audience_is_rejected(config, keypair):
@@ -104,7 +104,7 @@ async def test_wrong_audience_is_rejected(config, keypair):
     status, body = await _call(
         {"oidcToken": token, "owner": "MagmaMoose", "repo": "brimyr"}, config, key
     )
-    assert (status, body["error"]) == (401, "invalid_oidc")
+    assert (status, body["error"]) == (401, "invalid_oidc")  # nosec B101
 
 
 async def test_claim_must_match_the_repo_being_asked_for(config, keypair):
@@ -114,7 +114,7 @@ async def test_claim_must_match_the_repo_being_asked_for(config, keypair):
     status, body = await _call(
         {"oidcToken": token, "owner": "MagmaMoose", "repo": "brimyr"}, config, key
     )
-    assert (status, body["error"]) == (403, "repo_mismatch")
+    assert (status, body["error"]) == (403, "repo_mismatch")  # nosec B101
 
 
 async def test_allowlist_blocks_a_repo_outside_it(keypair):
@@ -129,7 +129,7 @@ async def test_allowlist_blocks_a_repo_outside_it(keypair):
     status, body = await _call(
         {"oidcToken": token, "owner": "MagmaMoose", "repo": "brimyr"}, config, key
     )
-    assert (status, body["error"]) == (403, "repo_not_allowed")
+    assert (status, body["error"]) == (403, "repo_not_allowed")  # nosec B101
 
 
 async def test_app_not_installed_is_403_not_502(config, keypair):
@@ -139,7 +139,7 @@ async def test_app_not_installed_is_403_not_502(config, keypair):
     status, body = await _call(
         {"oidcToken": token, "owner": "MagmaMoose", "repo": "brimyr"}, config, key, transport
     )
-    assert (status, body["error"]) == (403, "app_not_installed")
+    assert (status, body["error"]) == (403, "app_not_installed")  # nosec B101
 
 
 async def test_successful_mint_returns_a_scoped_token(config, keypair):
@@ -149,7 +149,7 @@ async def test_successful_mint_returns_a_scoped_token(config, keypair):
         if request.url.path.endswith("/installation"):
             return httpx.Response(200, json={"id": 42})
         return httpx.Response(
-            200, json={"token": "ghs_minted", "expires_at": "2026-08-19T18:00:00Z"}
+            200, json={"token": "ghs_minted", "expires_at": "2026-08-19T18:00:00Z"}  # nosec B105
         )
 
     token = _oidc(key)
@@ -159,9 +159,9 @@ async def test_successful_mint_returns_a_scoped_token(config, keypair):
         key,
         httpx.MockTransport(respond),
     )
-    assert status == 200
-    assert body["token"] == "ghs_minted"
-    assert body["repository"] == REPOSITORY
+    assert status == 200  # nosec B101
+    assert body["token"] == "ghs_minted"  # nosec B101 B105
+    assert body["repository"] == REPOSITORY  # nosec B101
 
 
 async def test_readyz_is_503_without_config(monkeypatch):
@@ -169,4 +169,4 @@ async def test_readyz_is_503_without_config(monkeypatch):
     monkeypatch.delenv("PRIVATE_KEY", raising=False)
     monkeypatch.delenv("SECRET_PATH", raising=False)
     status, body = handle_ready()
-    assert (status, body["status"]) == (503, "misconfigured")
+    assert (status, body["status"]) == (503, "misconfigured")  # nosec B101

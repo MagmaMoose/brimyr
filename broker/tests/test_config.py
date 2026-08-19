@@ -19,36 +19,35 @@ def _clean_ssm_cache():
 
 def test_escaped_newlines_are_restored():
     """Secret stores commonly \\n-escape a PEM; cryptography needs real newlines."""
-    # gitleaks:allow - a literal test fixture, not a key
-    escaped = "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----"
+    escaped = "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----"  # gitleaks:allow  # nosemgrep
     config = BrokerConfig(app_id="1", private_key=escaped)
-    assert "\n" in config.private_key
-    assert "\\n" not in config.private_key
+    assert "\n" in config.private_key  # nosec B101
+    assert "\\n" not in config.private_key  # nosec B101
 
 
 def test_real_newlines_are_left_alone():
     pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
-    assert BrokerConfig(app_id="1", private_key=pem).private_key == pem
+    assert BrokerConfig(app_id="1", private_key=pem).private_key == pem  # nosec B101
 
 
 def test_allowed_empty_means_any():
-    assert BrokerConfig(app_id="1", private_key="k").allowed() == set()
+    assert BrokerConfig(app_id="1", private_key="k").allowed() == set()  # nosec B101
 
 
 def test_allowed_parses_and_strips():
     config = BrokerConfig(app_id="1", private_key="k", allowed_repositories="a/b, c/d ,")
-    assert config.allowed() == {"a/b", "c/d"}
+    assert config.allowed() == {"a/b", "c/d"}  # nosec B101
 
 
 def test_permissions_defaults_to_pull_requests_write():
-    assert BrokerConfig(app_id="1", private_key="k").permissions() == {"pull_requests": "write"}
+    assert BrokerConfig(app_id="1", private_key="k").permissions() == {"pull_requests": "write"}  # nosec B101
 
 
 def test_permissions_parses_override():
     config = BrokerConfig(
         app_id="1", private_key="k", token_permissions_json=json.dumps({"issues": "read"})
     )
-    assert config.permissions() == {"issues": "read"}
+    assert config.permissions() == {"issues": "read"}  # nosec B101
 
 
 def test_load_config_reads_the_environment(monkeypatch):
@@ -57,8 +56,8 @@ def test_load_config_reads_the_environment(monkeypatch):
     monkeypatch.setenv("PRIVATE_KEY", "pem")
     monkeypatch.setenv("OIDC_AUDIENCE", "brimyr")
     config = load_config()
-    assert config.app_id == "42"
-    assert config.private_key == "pem"
+    assert config.app_id == "42"  # nosec B101
+    assert config.private_key == "pem"  # nosec B101
 
 
 def test_load_config_raises_when_unconfigured(monkeypatch):
@@ -80,7 +79,7 @@ def test_secret_path_unset_does_not_touch_ssm(monkeypatch):
         raise AssertionError("SSM must not be consulted when SECRET_PATH is unset")
 
     monkeypatch.setattr(ssm, "secrets", explode)
-    assert load_config().app_id == "42"
+    assert load_config().app_id == "42"  # nosec B101
 
 
 def test_ssm_overlay_wins_over_the_environment(monkeypatch):
@@ -95,5 +94,5 @@ def test_ssm_overlay_wins_over_the_environment(monkeypatch):
     monkeypatch.setattr(ssm, "secrets", lambda path: {"app_id": "99", "private_key": "real"})
 
     config = load_config()
-    assert config.app_id == "99"
-    assert config.private_key == "real"
+    assert config.app_id == "99"  # nosec B101
+    assert config.private_key == "real"  # nosec B101
