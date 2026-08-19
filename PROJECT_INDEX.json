@@ -1,0 +1,172 @@
+{
+  "generated": "2026-08-19T14:47:46Z",
+  "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added — pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py) shell out and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook.",
+  "entrypoints": [
+    "src/brimyr/cli.py:main",
+    "src/brimyr/cli.py:cmd_ci",
+    "src/brimyr/cli.py:cmd_coverage",
+    "src/brimyr/cli.py:cmd_local",
+    "src/brimyr/cli.py:_run_flow",
+    "action.yml:runs",
+    ".github/workflows/gate.yml:jobs.brimyr",
+    ".pre-commit-hooks.yaml:brimyr"
+  ],
+  "modules": {
+    "cli": {
+      "path": "src/brimyr/cli.py",
+      "purpose": "argparse dispatch (coverage | ci | local | version) plus _run_flow — the single pipeline every surface executes: collect coverage -> compute the diff -> patch coverage -> gate -> summary/outputs.",
+      "exports": ["main", "build_parser", "cmd_coverage", "cmd_ci", "cmd_local", "cmd_version", "counts_to_dict"],
+      "depends_on": ["git", "report", "sonar", "coverage.diff", "coverage.model", "coverage.patch", "detect", "gate", "local", "modes", "runner"]
+    },
+    "coverage.diff": {
+      "path": "src/brimyr/coverage/diff.py",
+      "purpose": "Pure unified-diff parser: diff text -> DiffIndex of changed files and added line ranges. Also owns path normalisation (a/ b/ prefix stripping, separators), used repo-wide.",
+      "exports": ["parse_unified_diff", "DiffIndex", "FileDiff", "normalize_path"],
+      "depends_on": []
+    },
+    "coverage.model": {
+      "path": "src/brimyr/coverage/model.py",
+      "purpose": "Coverage data model. CoverageBuilder accumulates per-line hit counts with max-wins semantics (covered by any test => covered); merge_reports folds multi-ecosystem runs into one report.",
+      "exports": ["CoverageReport", "FileCoverage", "CoverageBuilder", "merge_reports"],
+      "depends_on": ["coverage.diff"]
+    },
+    "coverage.lcov": {
+      "path": "src/brimyr/coverage/lcov.py",
+      "purpose": "lcov .info text -> CoverageReport. Hand-rolled DA-record parser, no third-party dependency.",
+      "exports": ["parse_lcov"],
+      "depends_on": ["coverage.model"]
+    },
+    "coverage.cobertura": {
+      "path": "src/brimyr/coverage/cobertura.py",
+      "purpose": "Cobertura XML -> CoverageReport via xml.etree; raises CoberturaError on malformed input so the caller can mark the run broken.",
+      "exports": ["parse_cobertura", "CoberturaError"],
+      "depends_on": ["coverage.model"]
+    },
+    "coverage.patch": {
+      "path": "src/brimyr/coverage/patch.py",
+      "purpose": "THE GATE'S HEART. Intersects a DiffIndex with a CoverageReport: added lines AND executable lines -> covered/missing per file, plus the overall percentage. Path matching goes exact -> prefix-stripped -> suffix in either direction (PatchPolicy).",
+      "exports": ["compute_patch_coverage", "PatchCoverage", "PatchPolicy", "PatchFileResult"],
+      "depends_on": ["coverage.diff", "coverage.model"]
+    },
+    "git": {
+      "path": "src/brimyr/git.py",
+      "purpose": "The ONLY git/subprocess boundary for history: merge-base resolution, diff text, shallow-clone detection. compute_changed_lines returns a ready DiffIndex.",
+      "exports": ["compute_changed_lines", "merge_base", "diff_text", "is_shallow", "GitError", "MergeBaseError", "ShallowCloneError"],
+      "depends_on": ["coverage.diff"]
+    },
+    "detect": {
+      "path": "src/brimyr/detect.py",
+      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report.",
+      "exports": ["detect_ecosystems", "ecosystem", "locate_coverage_file", "Ecosystem", "CoverageFormat", "ECOSYSTEMS"],
+      "depends_on": []
+    },
+    "runner": {
+      "path": "src/brimyr/runner.py",
+      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken — never a 0% score. Injectable Runner for tests.",
+      "exports": ["run_tests", "run_one", "ingest_file", "parse_coverage_text", "RunResult", "RunOutcome", "IngestError"],
+      "depends_on": ["coverage.cobertura", "coverage.lcov", "coverage.model", "detect"]
+    },
+    "sonar": {
+      "path": "src/brimyr/sonar.py",
+      "purpose": "Builds sonar-scanner -D arguments from a SonarConfig and runs it, failure-isolated: it never raises and never changes the gate verdict, it only returns a SonarResult message for the summary.",
+      "exports": ["run_scanner", "build_scanner_args", "SonarConfig", "SonarResult"],
+      "depends_on": []
+    },
+    "gate": {
+      "path": "src/brimyr/gate.py",
+      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, and the vacuous pass when nothing coverable changed.",
+      "exports": ["decide_gate", "GateDecision", "DEFAULT_THRESHOLD", "EXIT_OK", "EXIT_BLOCKED", "EXIT_ERROR"],
+      "depends_on": ["coverage.patch"]
+    },
+    "modes": {
+      "path": "src/brimyr/modes.py",
+      "purpose": "Mode.PR (gates) vs Mode.BASELINE (report-only), resolved from an explicit --mode or GITHUB_EVENT_NAME. Mode.gates is the single switch the flow reads.",
+      "exports": ["Mode", "resolve_mode"],
+      "depends_on": []
+    },
+    "report": {
+      "path": "src/brimyr/report.py",
+      "purpose": "Renders the Markdown job summary (verdict, percentage, per-file misses, ecosystems, Sonar note) and writes GITHUB_STEP_SUMMARY / GITHUB_OUTPUT. No-ops cleanly off CI.",
+      "exports": ["render_summary", "append_step_summary", "write_outputs"],
+      "depends_on": ["detect", "gate", "modes"]
+    },
+    "local": {
+      "path": "src/brimyr/local.py",
+      "purpose": "Infers the base ref for the pre-push hook (explicit -> upstream -> origin/HEAD -> default branch), returning None when it cannot, so the CLI can ask for --base.",
+      "exports": ["resolve_local_base"],
+      "depends_on": []
+    },
+    "surface.action": {
+      "path": "action.yml",
+      "purpose": "Composite GitHub Action wrapping `brimyr ci`: inputs mirror the CLI flags (mode, threshold, ecosystem, sonar-*), outputs mirror the gate outputs.",
+      "exports": ["inputs", "outputs", "runs.steps"],
+      "depends_on": ["cli"]
+    },
+    "surface.workflow": {
+      "path": ".github/workflows/gate.yml",
+      "purpose": "Reusable workflow (workflow_call) that checks out with enough history, sets up the toolchain, fetches the action, and runs it — the drop-in way for consumer repos.",
+      "exports": ["jobs.brimyr"],
+      "depends_on": ["surface.action"]
+    },
+    "surface.hook": {
+      "path": ".pre-commit-hooks.yaml",
+      "purpose": "pre-commit hook id `brimyr` running `brimyr local` at the pre-push stage (too heavy for pre-commit: it runs the whole suite).",
+      "exports": ["brimyr"],
+      "depends_on": ["cli"]
+    },
+    "tests": {
+      "path": "tests/",
+      "purpose": "One test module per source module (tests/test_<module>.py), plus conftest.py fixtures. Core modules are tested on literal diff/report text; edge modules inject a fake runner so no real toolchain is needed.",
+      "exports": ["conftest fixtures"],
+      "depends_on": ["cli", "coverage.patch", "coverage.diff", "detect", "gate", "runner", "sonar", "report", "local", "modes"]
+    }
+  },
+  "callgraph_highlights": [
+    {
+      "caller": "cli.main",
+      "calls": ["cli.build_parser", "cli.cmd_ci", "cli.cmd_coverage", "cli.cmd_local", "cli.cmd_version"],
+      "note": "Pure dispatch. Every command except `version` funnels into _run_flow."
+    },
+    {
+      "caller": "cli._run_flow",
+      "calls": ["cli._collect_coverage", "git.compute_changed_lines", "coverage.patch.compute_patch_coverage", "gate.decide_gate", "cli._maybe_run_sonar", "report.render_summary", "report.append_step_summary", "cli._emit_outputs"],
+      "note": "The whole product in ~40 lines — read this before anything else. Baseline mode and broken runs skip the diff and gate on an empty DiffIndex."
+    },
+    {
+      "caller": "cli._collect_coverage",
+      "calls": ["runner.ingest_file", "coverage.model.merge_reports", "detect.detect_ecosystems", "detect.ecosystem", "runner.run_tests"],
+      "note": "--coverage-file is an escape hatch that ingests pre-made reports and never runs tests; otherwise ecosystems are detected (or forced) and run."
+    },
+    {
+      "caller": "runner.run_one",
+      "calls": ["detect.locate_coverage_file", "runner.ingest_file", "coverage.lcov.parse_lcov", "coverage.cobertura.parse_cobertura"],
+      "note": "Every failure path here produces RunOutcome.error -> RunResult.broken -> exit 2, never a 0% gate failure."
+    },
+    {
+      "caller": "coverage.patch.compute_patch_coverage",
+      "calls": ["coverage.patch._index", "coverage.patch._match", "coverage.diff.FileDiff.added_lines"],
+      "note": "Denominator = added lines AND FileCoverage.executable. Deleted files are skipped; files the report never mentions contribute nothing (diff-cover behaviour)."
+    },
+    {
+      "caller": "git.compute_changed_lines",
+      "calls": ["git.merge_base", "git.diff_text", "coverage.diff.parse_unified_diff"],
+      "note": "Shallow clones raise ShallowCloneError, which the CLI turns into exit 2 with a fetch-depth hint."
+    },
+    {
+      "caller": "coverage.model.CoverageBuilder.record",
+      "calls": ["coverage.diff.normalize_path"],
+      "note": "Max-hits-wins is why merging several ecosystems (or several test runs) can only ever mark more lines covered."
+    }
+  ],
+  "hotspots": [
+    "src/brimyr/cli.py",
+    "src/brimyr/coverage/patch.py",
+    "src/brimyr/coverage/diff.py",
+    "src/brimyr/detect.py",
+    "src/brimyr/runner.py",
+    "src/brimyr/gate.py",
+    "tests/test_patch.py",
+    "action.yml",
+    "docs/"
+  ]
+}
