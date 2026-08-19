@@ -37,6 +37,10 @@ docs = ["mkdocs-material>=9.5"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# broker/ is a SEPARATE project with its own pyproject.toml, its own lock, its own ruff
+# config and target-version py312 (the Lambda runtime). Linting it with the CLI's py311
+# settings reports UP rules against the wrong target. `make -C broker fmt` covers it.
+extend-exclude = ["broker"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

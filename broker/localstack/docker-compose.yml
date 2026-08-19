@@ -1,0 +1,31 @@
+# LocalStack, community image. Everything the broker touches — Lambda, API Gateway v2,
+# SSM Parameter Store, KMS, IAM, STS, CloudWatch Logs — is emulated on the free tier, so
+# a local run exercises the real Terraform and the real deployed zip.
+#
+# `make -C broker up` starts it; `make -C broker smoke` runs the end-to-end test.
+# What a local run does and does NOT prove is spelled out in main.tf.
+
+services:
+  localstack:
+    image: localstack/localstack:4
+    container_name: brimyr-broker-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      # Named explicitly rather than left to the default, so a service the stack starts
+      # depending on fails loudly at boot instead of at the first API call.
+      SERVICES: "lambda,apigateway,apigatewayv2,ssm,kms,iam,sts,logs"
+      DEBUG: "0"
+      # Lambda runs in sibling containers on the host daemon, which is why the socket is
+      # mounted below. The alternative (LAMBDA_RUNTIME_EXECUTOR=local) skips the container
+      # and with it the runtime's own import path — and the import path is precisely what
+      # build_lambda_zip.py exists to get right, so testing without it would test nothing.
+      LAMBDA_RUNTIME_EXECUTOR: "docker"
+      LAMBDA_REMOVE_CONTAINERS: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]  # DevSkim: ignore DS162092
+      interval: 5s
+      timeout: 5s
+      retries: 20

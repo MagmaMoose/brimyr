@@ -227,3 +227,11 @@ node_modules/
 .claude/last_output.txt
 .claude/settings.local.json
 .claude/worktrees/
+
+# Broker (AWS token broker) build + local state
+broker/dist/
+broker/.venv/
+broker/localstack/.terraform/
+broker/localstack/.terraform.lock.hcl
+broker/localstack/terraform.tfstate
+broker/localstack/terraform.tfstate.backup
