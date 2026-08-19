@@ -14,7 +14,7 @@ quietly wrong.
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 - test fixture builds a fake CompletedProcess; nothing is executed
 from pathlib import Path
 
 import pytest
@@ -65,7 +65,7 @@ def test_every_test_project_report_is_located(tmp_path):
     )
     found = locate_coverage_files(ecosystem("dotnet"), tmp_path)
 
-    assert len(found) == 3, "one report per test project must be located"
+    assert len(found) == 3, "one report per test project must be located"  # nosec B101
 
 
 def test_located_order_is_stable_not_mtime(tmp_path):
@@ -79,7 +79,7 @@ def test_located_order_is_stable_not_mtime(tmp_path):
     (tmp_path / "TestResults" / "guid-0" / "coverage.cobertura.xml").touch()  # newest now
     second = locate_coverage_files(ecosystem("dotnet"), tmp_path)
 
-    assert first == second
+    assert first == second  # nosec B101
 
 
 def test_run_one_merges_all_reports(tmp_path):
@@ -89,9 +89,9 @@ def test_run_one_merges_all_reports(tmp_path):
     )
     outcome = run_one(ecosystem("dotnet"), tmp_path, runner=_fake_runner())
 
-    assert outcome.ok
-    assert len(outcome.coverage_paths) == 2
-    assert {f.path for f in outcome.report.files} == {"src/Api/Handler.cs", "src/Core/Rules.cs"}
+    assert outcome.ok  # nosec B101
+    assert len(outcome.coverage_paths) == 2  # nosec B101
+    assert {f.path for f in outcome.report.files} == {"src/Api/Handler.cs", "src/Core/Rules.cs"}  # nosec B101
 
 
 def test_the_gate_does_not_silently_pass_a_dropped_project(tmp_path):
@@ -118,8 +118,8 @@ def test_the_gate_does_not_silently_pass_a_dropped_project(tmp_path):
     diff = DiffIndex((FileDiff("src/Core/Rules.cs", "modified", ((1, 2),)),))
     patch = compute_patch_coverage(diff, outcome.report)
 
-    assert patch.total_lines == 2, "the changed lines must be in the denominator"
-    assert patch.percent == 0.0, "an uncovered change must read 0%, not a vacuous 100%"
+    assert patch.total_lines == 2, "the changed lines must be in the denominator"  # nosec B101
+    assert patch.percent == 0.0, "an uncovered change must read 0%, not a vacuous 100%"  # nosec B101
 
 
 def test_a_single_unparseable_report_breaks_the_run(tmp_path):
@@ -130,9 +130,9 @@ def test_a_single_unparseable_report_breaks_the_run(tmp_path):
 
     outcome = run_one(ecosystem("dotnet"), tmp_path, runner=_fake_runner())
 
-    assert not outcome.ok
-    assert outcome.report is None
-    assert outcome.error
+    assert not outcome.ok  # nosec B101
+    assert outcome.report is None  # nosec B101
+    assert outcome.error  # nosec B101
 
 
 def test_single_report_ecosystems_are_unaffected(tmp_path):
@@ -142,8 +142,8 @@ def test_single_report_ecosystems_are_unaffected(tmp_path):
 
     found = locate_coverage_files(ecosystem("python"), tmp_path)
 
-    assert [p.name for p in found] == ["coverage.xml"]
-    assert locate_coverage_file(ecosystem("python"), tmp_path).name == "coverage.xml"
+    assert [p.name for p in found] == ["coverage.xml"]  # nosec B101
+    assert locate_coverage_file(ecosystem("python"), tmp_path).name == "coverage.xml"  # nosec B101
 
 
 @pytest.mark.parametrize("count", [1, 2, 12])
@@ -151,5 +151,5 @@ def test_scales_to_however_many_projects_a_solution_has(tmp_path, count):
     _solution(tmp_path, {f"src/P{i}/File{i}.cs": {1: 1} for i in range(count)})
     outcome = run_one(ecosystem("dotnet"), tmp_path, runner=_fake_runner())
 
-    assert len(outcome.coverage_paths) == count
-    assert len(outcome.report.files) == count
+    assert len(outcome.coverage_paths) == count  # nosec B101
+    assert len(outcome.report.files) == count  # nosec B101

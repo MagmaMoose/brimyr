@@ -18,10 +18,10 @@ def test_basic_patch_coverage(make_report):
     diff = _diff(FileDiff("a.py", "modified", ((1, 4),)))
     report = make_report({"a.py": {1: 1, 2: 1, 3: 0}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 3  # lines 1,2,3 are executable; 4 excluded
-    assert patch.covered_lines == 2
-    assert round(patch.percent, 1) == 66.7
-    assert patch.files[0].missing_lines == (3,)
+    assert patch.total_lines == 3  # nosec B101 - lines 1,2,3 are executable; 4 excluded
+    assert patch.covered_lines == 2  # nosec B101
+    assert round(patch.percent, 1) == 66.7  # nosec B101
+    assert patch.files[0].missing_lines == (3,)  # nosec B101
 
 
 def test_vacuous_pass_when_nothing_coverable(make_report):
@@ -29,17 +29,17 @@ def test_vacuous_pass_when_nothing_coverable(make_report):
     diff = _diff(FileDiff("README.md", "modified", ((1, 10),)))
     report = make_report({"a.py": {1: 1}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 0
-    assert not patch.has_measurable
-    assert patch.percent == 100.0
+    assert patch.total_lines == 0  # nosec B101
+    assert not patch.has_measurable  # nosec B101
+    assert patch.percent == 100.0  # nosec B101
 
 
 def test_new_file_all_lines_count(make_report):
     diff = _diff(FileDiff("a.py", "added", ((1, 3),)))
     report = make_report({"a.py": {1: 1, 2: 0, 3: 1}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 3
-    assert patch.covered_lines == 2
+    assert patch.total_lines == 3  # nosec B101
+    assert patch.covered_lines == 2  # nosec B101
 
 
 def test_pre_existing_uncovered_lines_excluded(make_report):
@@ -47,24 +47,24 @@ def test_pre_existing_uncovered_lines_excluded(make_report):
     diff = _diff(FileDiff("a.py", "modified", ((1, 1),)))
     report = make_report({"a.py": {1: 1, 50: 0}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 1
-    assert patch.covered_lines == 1
-    assert patch.percent == 100.0
+    assert patch.total_lines == 1  # nosec B101
+    assert patch.covered_lines == 1  # nosec B101
+    assert patch.percent == 100.0  # nosec B101
 
 
 def test_deleted_file_ignored(make_report):
     diff = _diff(FileDiff("gone.py", "deleted", ()))
     report = make_report({"a.py": {1: 1}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 0
+    assert patch.total_lines == 0  # nosec B101
 
 
 def test_absolute_coverage_path_suffix_match(make_report):
     diff = _diff(FileDiff("src/a.py", "modified", ((1, 2),)))
     report = make_report({"/runner/work/repo/src/a.py": {1: 1, 2: 0}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 2
-    assert patch.covered_lines == 1
+    assert patch.total_lines == 2  # nosec B101
+    assert patch.covered_lines == 1  # nosec B101
 
 
 def test_strip_prefix_match(make_report):
@@ -72,8 +72,8 @@ def test_strip_prefix_match(make_report):
     report = make_report({"backend/a.py": {1: 1}})
     policy = PatchPolicy(strip_prefixes=("backend/",))
     patch = compute_patch_coverage(diff, report, policy)
-    assert patch.total_lines == 1
-    assert patch.covered_lines == 1
+    assert patch.total_lines == 1  # nosec B101
+    assert patch.covered_lines == 1  # nosec B101
 
 
 def test_multi_file_aggregation(make_report):
@@ -83,18 +83,18 @@ def test_multi_file_aggregation(make_report):
     )
     report = make_report({"a.py": {1: 1, 2: 1}, "b.py": {1: 0, 2: 0}})
     patch = compute_patch_coverage(diff, report)
-    assert patch.total_lines == 4
-    assert patch.covered_lines == 2
-    assert patch.percent == 50.0
+    assert patch.total_lines == 4  # nosec B101
+    assert patch.covered_lines == 2  # nosec B101
+    assert patch.percent == 50.0  # nosec B101
     below = patch.files_below(80.0)
-    assert {f.path for f in below} == {"b.py"}
+    assert {f.path for f in below} == {"b.py"}  # nosec B101
 
 
 def test_suffix_match_can_be_disabled(make_report):
     diff = _diff(FileDiff("src/a.py", "modified", ((1, 1),)))
     report = make_report({"/abs/src/a.py": {1: 1}})
     patch = compute_patch_coverage(diff, report, PatchPolicy(suffix_match=False))
-    assert patch.total_lines == 0  # no exact match, suffix disabled
+    assert patch.total_lines == 0  # nosec B101 - no exact match, suffix disabled
 
 
 # ── exclude_globs: generated code must not sink an otherwise well-tested change ──────
@@ -119,9 +119,9 @@ def test_excluded_files_leave_the_denominator_entirely(make_report):
         diff, report, PatchPolicy(exclude_globs=("*Migrations*",))
     )
 
-    assert without.total_lines == 4 and without.percent == 50.0
-    assert with_exclude.total_lines == 2, "the migration must not be in the denominator"
-    assert with_exclude.percent == 100.0
+    assert without.total_lines == 4 and without.percent == 50.0  # nosec B101
+    assert with_exclude.total_lines == 2, "the migration must not be in the denominator"  # nosec B101
+    assert with_exclude.percent == 100.0  # nosec B101
 
 
 def test_glob_crosses_directory_separators(make_report):
@@ -131,7 +131,7 @@ def test_glob_crosses_directory_separators(make_report):
         _diff_of("a/b/c/Migrations/X.cs"), report, PatchPolicy(exclude_globs=("*Migrations*",))
     )
 
-    assert patch.total_lines == 0
+    assert patch.total_lines == 0  # nosec B101
 
 
 def test_excluding_everything_is_a_vacuous_pass_not_a_zero(make_report):
@@ -141,16 +141,16 @@ def test_excluding_everything_is_a_vacuous_pass_not_a_zero(make_report):
         _diff_of("gen/A.cs"), report, PatchPolicy(exclude_globs=("gen/*",))
     )
 
-    assert patch.total_lines == 0
-    assert patch.percent == 100.0
-    assert not patch.has_measurable
+    assert patch.total_lines == 0  # nosec B101
+    assert patch.percent == 100.0  # nosec B101
+    assert not patch.has_measurable  # nosec B101
 
 
 def test_no_globs_changes_nothing(make_report):
     report = make_report({"src/A.cs": {1: 1, 2: 0}})
     diff = _diff_of("src/A.cs")
 
-    assert (
+    assert (  # nosec B101
         compute_patch_coverage(diff, report).percent
         == compute_patch_coverage(diff, report, PatchPolicy(exclude_globs=())).percent
     )
@@ -171,4 +171,4 @@ def test_the_patterns_a_dotnet_consumer_would_actually_write(make_report, patter
     report = make_report({path: {1: 0, 2: 0}})
     patch = compute_patch_coverage(_diff_of(path), report, PatchPolicy(exclude_globs=(pattern,)))
 
-    assert patch.total_lines == 0, f"{pattern} should have excluded {path}"
+    assert patch.total_lines == 0, f"{pattern} should have excluded {path}"  # nosec B101
