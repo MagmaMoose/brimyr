@@ -261,6 +261,8 @@ def _maybe_post_comment(args: argparse.Namespace, summary: str) -> str | None:
 
     slug = args.repo_slug or os.environ.get("GITHUB_REPOSITORY", "")
     number = args.pr_number if args.pr_number else _pr_number_from_event()
+    if not number:
+        return None
     token, byline = _comment_token(args, slug)
     config = comment_mod.CommentConfig(
         base_url=args.github_api_url

@@ -57,8 +57,8 @@ def test_no_broker_configured_never_touches_the_network():
     opener = _FakeOpener()
     result = mint_bot_token("", "MagmaMoose", "brimyr", opener=opener)
 
-    assert not result.ok and result.token is None
-    assert opener.calls == []
+    assert not result.ok and result.token is None  # nosec B101
+    assert opener.calls == []  # nosec B101
 
 
 def test_without_id_token_permission_the_message_names_the_fix(monkeypatch):
@@ -67,8 +67,8 @@ def test_without_id_token_permission_the_message_names_the_fix(monkeypatch):
     monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", raising=False)
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr")
 
-    assert not result.ok
-    assert "id-token: write" in result.message
+    assert not result.ok  # nosec B101
+    assert "id-token: write" in result.message  # nosec B101
 
 
 def test_oidc_request_asks_for_the_brimyr_audience(actions_env):
@@ -76,28 +76,28 @@ def test_oidc_request_asks_for_the_brimyr_audience(actions_env):
     opener = _FakeOpener([{"value": _OIDC}])
     token = request_actions_oidc_token(opener=opener)
 
-    assert token == _OIDC
+    assert token == _OIDC  # nosec B101
     _, url, _ = opener.calls[0]
-    assert f"audience={OIDC_AUDIENCE}" in url
-    assert url.startswith("https://runner.example/tok?api-version=1&")
+    assert f"audience={OIDC_AUDIENCE}" in url  # nosec B101
+    assert url.startswith("https://runner.example/tok?api-version=1&")  # nosec B101
 
 
 def test_successful_mint_returns_the_bot_token(actions_env):
     opener = _FakeOpener([{"value": _OIDC}, {"token": _MINTED, "repository": "MagmaMoose/brimyr"}])
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr", opener=opener)
 
-    assert result.ok and result.token == _MINTED
+    assert result.ok and result.token == _MINTED  # nosec B101
     method, url, body = opener.calls[-1]
-    assert method == "POST"
-    assert url == "https://broker.example/token"
-    assert body == {"oidcToken": _OIDC, "owner": "MagmaMoose", "repo": "brimyr"}
+    assert method == "POST"  # nosec B101
+    assert url == "https://broker.example/token"  # nosec B101
+    assert body == {"oidcToken": _OIDC, "owner": "MagmaMoose", "repo": "brimyr"}  # nosec B101
 
 
 def test_trailing_slash_on_the_broker_url_is_tolerated(actions_env):
     opener = _FakeOpener([{"value": _OIDC}, {"token": _MINTED}])
     mint_bot_token("https://broker.example/", "MagmaMoose", "brimyr", opener=opener)
 
-    assert opener.calls[-1][1] == "https://broker.example/token"
+    assert opener.calls[-1][1] == "https://broker.example/token"  # nosec B101
 
 
 @pytest.mark.parametrize(
@@ -117,29 +117,29 @@ def test_broker_errors_fall_back_and_name_the_reason(actions_env, code, error, e
     opener = _FakeOpener([{"value": _OIDC}, exc])
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr", opener=opener)
 
-    assert not result.ok and result.token is None
-    assert str(code) in result.message
-    assert expected in result.message
+    assert not result.ok and result.token is None  # nosec B101
+    assert str(code) in result.message  # nosec B101
+    assert expected in result.message  # nosec B101
 
 
 def test_unreachable_broker_falls_back(actions_env):
     opener = _FakeOpener([{"value": _OIDC}, urllib.error.URLError("no route to host")])
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr", opener=opener)
 
-    assert not result.ok and "unreachable" in result.message
+    assert not result.ok and "unreachable" in result.message  # nosec B101
 
 
 def test_broker_answering_without_a_token_falls_back(actions_env):
     opener = _FakeOpener([{"value": _OIDC}, {"repository": "MagmaMoose/brimyr"}])
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr", opener=opener)
 
-    assert not result.ok and "no token" in result.message
+    assert not result.ok and "no token" in result.message  # nosec B101
 
 
 def test_missing_owner_or_repo_short_circuits(actions_env):
     opener = _FakeOpener()
-    assert not mint_bot_token("https://broker.example", "", "brimyr", opener=opener).ok
-    assert opener.calls == []
+    assert not mint_bot_token("https://broker.example", "", "brimyr", opener=opener).ok  # nosec B101
+    assert opener.calls == []  # nosec B101
 
 
 def test_the_minted_token_never_appears_in_the_message(actions_env):
@@ -147,8 +147,8 @@ def test_the_minted_token_never_appears_in_the_message(actions_env):
     opener = _FakeOpener([{"value": _OIDC}, {"token": _MINTED}])
     result = mint_bot_token("https://broker.example", "MagmaMoose", "brimyr", opener=opener)
 
-    assert _MINTED not in result.message
-    assert _OIDC not in result.message
+    assert _MINTED not in result.message  # nosec B101
+    assert _OIDC not in result.message  # nosec B101
 
 
 def test_a_failure_message_never_leaks_the_oidc_token(actions_env):
@@ -159,6 +159,6 @@ def test_a_failure_message_never_leaks_the_oidc_token(actions_env):
     # with f"broker unreachable: {exc}", and the caller prints that message to stderr, so
     # a transport error carrying the request URL put the OIDC token straight into the job
     # log. Only the exception CLASS NAME is reported now.
-    assert not result.ok
-    assert _OIDC not in result.message
-    assert "URLError" in result.message
+    assert not result.ok  # nosec B101
+    assert _OIDC not in result.message  # nosec B101
+    assert "URLError" in result.message  # nosec B101

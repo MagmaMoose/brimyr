@@ -71,7 +71,7 @@ jobs:
           # first means no later line — including a printed upstream body — can be the thing
           # that leaks it.
           if [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            echo "::add-mask::${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+            echo "::add-mask::${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
           fi
 
           summary "## Broker smoke — \`${BROKER_URL}\`"
@@ -200,7 +200,7 @@ jobs:
             token="$(jq -r '.token // empty' <<<"${body}" 2>/dev/null || true)"
             if [ -n "${token}" ]; then echo "::add-mask::${token}"; fi
             repository="$(safe "$(jq -r '.repository // empty' <<<"${body}" 2>/dev/null || true)")"
-            expires_at="$(jq -r '.expires_at // empty' <<<"${body}" 2>/dev/null || true)"
+            expires_at="$(safe "$(jq -r '.expires_at // empty' <<<"${body}" 2>/dev/null || true)")"
             # Through safe() as well: fail() writes into ::error:: and the summary table,
             # so a newline here would inject a workflow command and a `|` would break the
             # table — on the one workflow whose job is to be unmistakably red.
