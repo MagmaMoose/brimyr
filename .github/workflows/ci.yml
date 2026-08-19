@@ -25,3 +25,36 @@ jobs:
         run: uv run ruff format --check .
       - name: Pytest
         run: uv run pytest -q
+
+  # broker/ is a SEPARATE project — its own pyproject, lock, ruff config and
+  # target-version py312 (the Lambda runtime). The root job above cannot cover it: root
+  # ruff sets `extend-exclude = ["broker"]` so the two configs do not fight over UP rules
+  # aimed at different Python versions, and root pytest sets `testpaths = ["tests"]`.
+  #
+  # Without this job that adds up to ~1000 lines of security-critical Lambda code and 65
+  # tests with NO CI at all, which is exactly what happened: five ruff errors reached main
+  # unnoticed. If you ever remove this job, remove the exclusions too.
+  broker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: broker
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.12'
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Ruff (lint)
+        run: uv run ruff check .
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+      - name: Pytest
+        run: uv run pytest -q
+      # The zip is what actually ships, so a dependency bump that breaks the import or
+      # the platform target fails here rather than at a cold start nobody is watching.
+      # Built for the Lambda runtime, never the runner's own platform.
+      - name: Build the Lambda package
+        run: uv run python scripts/build_lambda_zip.py --out dist/broker.zip --platform x86_64-manylinux_2_28

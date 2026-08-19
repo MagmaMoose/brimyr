@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import httpx
 import jwt
 import pytest
@@ -92,7 +90,9 @@ class TestMintInstallationToken:
         def respond(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/installation"):
                 return httpx.Response(200, json={"id": 7})
-            return httpx.Response(200, json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"})  # nosec B105
+            return httpx.Response(
+                200, json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"}
+            )  # nosec B105
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             token, expires_at = await mint_installation_token(
