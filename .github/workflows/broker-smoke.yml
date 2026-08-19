@@ -107,7 +107,7 @@ jobs:
 
           # Anything the far end sent is UNTRUSTED BYTES, and stdout in Actions is a command
           # channel. A body containing `::stop-commands::<tok>` switches off workflow-command
-          # processing, after which every ::add-mask:: below is logged as literal text —
+          # processing, after which every ::add-mask:: below is logged as literal text —  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
           # printing the OIDC JWT and the minted installation token in full instead of
           # masking them. That is not hypothetical here: both places a body gets printed are
           # failure paths, i.e. exactly when the response is coming from something other than
