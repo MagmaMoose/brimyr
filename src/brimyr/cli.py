@@ -80,7 +80,10 @@ def _parse_coverage_arg(spec: str) -> tuple[Path, CoverageFormat]:
 
 
 def _patch_policy(args: argparse.Namespace, extra_prefixes: tuple[str, ...] = ()) -> PatchPolicy:
-    return PatchPolicy(strip_prefixes=tuple(args.strip_prefix or ()) + extra_prefixes)
+    return PatchPolicy(
+        strip_prefixes=tuple(args.strip_prefix or ()) + extra_prefixes,
+        exclude_globs=tuple(getattr(args, "exclude", None) or ()),
+    )
 
 
 def counts_to_dict(decision: GateDecision) -> dict[str, object]:
@@ -228,8 +231,14 @@ def _collect_coverage(
     sonar_paths: dict[str, tuple[str, ...]] = {}
     for outcome in result.outcomes:
         prop = outcome.ecosystem.sonar_property
-        if prop and outcome.coverage_path is not None:
-            sonar_paths[prop] = (*sonar_paths.get(prop, ()), str(outcome.coverage_path))
+        if prop and outcome.coverage_paths:
+            # EVERY report, not one. sonar.*.reportPaths is a comma-separated list, and a
+            # multi-project solution produces one report per test project — sending only
+            # the first understates coverage in SonarQube exactly as it did in the gate.
+            sonar_paths[prop] = (
+                *sonar_paths.get(prop, ()),
+                *(str(path) for path in outcome.coverage_paths),
+            )
         if outcome.error:
             _eprint(f"brimyr: {outcome.ecosystem.label}: {outcome.error}")
     return result.report, result.broken, ecosystems, sonar_paths
@@ -394,6 +403,15 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
         action="append",
         metavar="PREFIX",
         help="Path prefix to strip from coverage paths before matching (repeatable).",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        metavar="GLOB",
+        help=(
+            "Drop changed files matching this glob from the patch-coverage denominator "
+            "entirely — for generated code (repeatable). e.g. '*Migrations*'."
+        ),
     )
     parser.add_argument(
         "--no-merge-base",

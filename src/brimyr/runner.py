@@ -24,7 +24,7 @@ from pathlib import Path
 from brimyr.coverage.cobertura import CoberturaError, parse_cobertura
 from brimyr.coverage.lcov import parse_lcov
 from brimyr.coverage.model import CoverageReport, merge_reports
-from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_file
+from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_files
 
 # A runner takes (command_string, cwd) and returns the completed process.
 Runner = Callable[[str, str], subprocess.CompletedProcess]
@@ -66,9 +66,16 @@ class RunOutcome:
 
     ecosystem: Ecosystem
     returncode: int
-    coverage_path: Path | None
+    #: EVERY report this ecosystem produced. `dotnet test` on a solution writes one per
+    #: test project, so this is routinely more than one; empty when the run produced none.
+    coverage_paths: tuple[Path, ...]
     report: CoverageReport | None
     error: str | None = None
+
+    @property
+    def coverage_path(self) -> Path | None:
+        """The first report, for callers and messages that want a single example."""
+        return self.coverage_paths[0] if self.coverage_paths else None
 
     @property
     def ok(self) -> bool:
@@ -94,7 +101,8 @@ class RunResult:
 
     @property
     def coverage_paths(self) -> tuple[Path, ...]:
-        return tuple(o.coverage_path for o in self.outcomes if o.coverage_path is not None)
+        """Every report across every ecosystem — what Sonar's reportPaths needs."""
+        return tuple(path for o in self.outcomes for path in o.coverage_paths)
 
 
 def run_one(
@@ -112,26 +120,36 @@ def run_one(
     try:
         completed = run_fn(cmd, repo_str)
     except OSError as exc:
-        return RunOutcome(eco, 127, None, None, error=f"could not launch tests: {exc}")
+        return RunOutcome(eco, 127, (), None, error=f"could not launch tests: {exc}")
 
-    coverage_path = locate_coverage_file(eco, repo)
-    if coverage_path is None:
+    coverage_files = locate_coverage_files(eco, repo)
+    if not coverage_files:
         return RunOutcome(
             eco,
             completed.returncode,
-            None,
+            (),
             None,
             error=(
                 f"no coverage file found (expected one of: {', '.join(eco.coverage_paths)}). "
                 "Did the test run emit coverage?"
             ),
         )
-    try:
-        report = ingest_file(coverage_path, eco.coverage_format)
-    except IngestError as exc:
-        return RunOutcome(eco, completed.returncode, coverage_path, None, error=str(exc))
 
-    return RunOutcome(eco, completed.returncode, coverage_path, report)
+    # ALL of them, merged. A solution with several test projects leaves one report per
+    # project; ingesting only the first would drop the rest, and a dropped project's
+    # files are then absent from the report entirely — which patch.py reads as "nothing
+    # coverable changed" rather than as an error. Covered-wins merging is also what makes
+    # a file exercised by two different test projects come out covered, not half-covered.
+    paths = tuple(coverage_files)
+    reports: list[CoverageReport] = []
+    for path in coverage_files:
+        try:
+            reports.append(ingest_file(path, eco.coverage_format))
+        except IngestError as exc:
+            # One unparseable report is a broken run, not a quietly smaller number.
+            return RunOutcome(eco, completed.returncode, paths, None, error=str(exc))
+
+    return RunOutcome(eco, completed.returncode, paths, merge_reports(reports))
 
 
 def run_tests(

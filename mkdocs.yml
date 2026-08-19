@@ -35,6 +35,7 @@ nav:
   - Architecture: architecture.md
   - Patch coverage: patch-coverage.md
   - Setup & usage: setup.md
+  - .NET solutions: dotnet.md
   - CLI reference: cli.md
 
 markdown_extensions:

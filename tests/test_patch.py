@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from brimyr.coverage.diff import DiffIndex, FileDiff
 from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage
 
@@ -93,3 +95,80 @@ def test_suffix_match_can_be_disabled(make_report):
     report = make_report({"/abs/src/a.py": {1: 1}})
     patch = compute_patch_coverage(diff, report, PatchPolicy(suffix_match=False))
     assert patch.total_lines == 0  # no exact match, suffix disabled
+
+
+# ── exclude_globs: generated code must not sink an otherwise well-tested change ──────
+
+
+def _diff_of(*paths: str) -> DiffIndex:
+    return DiffIndex(tuple(FileDiff(p, "modified", ((1, 2),)) for p in paths))
+
+
+def test_excluded_files_leave_the_denominator_entirely(make_report):
+    """Not counted as covered — not counted at all."""
+    report = make_report(
+        {
+            "src/Api/Handler.cs": {1: 1, 2: 1},
+            "src/Api/Migrations/0001_Init.cs": {1: 0, 2: 0},
+        }
+    )
+    diff = _diff_of("src/Api/Handler.cs", "src/Api/Migrations/0001_Init.cs")
+
+    without = compute_patch_coverage(diff, report)
+    with_exclude = compute_patch_coverage(
+        diff, report, PatchPolicy(exclude_globs=("*Migrations*",))
+    )
+
+    assert without.total_lines == 4 and without.percent == 50.0
+    assert with_exclude.total_lines == 2, "the migration must not be in the denominator"
+    assert with_exclude.percent == 100.0
+
+
+def test_glob_crosses_directory_separators(make_report):
+    """`*Migrations*` has to match at any depth — Path.match would not."""
+    report = make_report({"a/b/c/Migrations/X.cs": {1: 0, 2: 0}})
+    patch = compute_patch_coverage(
+        _diff_of("a/b/c/Migrations/X.cs"), report, PatchPolicy(exclude_globs=("*Migrations*",))
+    )
+
+    assert patch.total_lines == 0
+
+
+def test_excluding_everything_is_a_vacuous_pass_not_a_zero(make_report):
+    """Consistent with the nothing-coverable-changed rule elsewhere."""
+    report = make_report({"gen/A.cs": {1: 0}})
+    patch = compute_patch_coverage(
+        _diff_of("gen/A.cs"), report, PatchPolicy(exclude_globs=("gen/*",))
+    )
+
+    assert patch.total_lines == 0
+    assert patch.percent == 100.0
+    assert not patch.has_measurable
+
+
+def test_no_globs_changes_nothing(make_report):
+    report = make_report({"src/A.cs": {1: 1, 2: 0}})
+    diff = _diff_of("src/A.cs")
+
+    assert (
+        compute_patch_coverage(diff, report).percent
+        == compute_patch_coverage(diff, report, PatchPolicy(exclude_globs=())).percent
+    )
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["*ModelSnapshot*", "*.Designer.cs", "*AspNetCoreGeneratedDocument*", "**/obj/**"],
+)
+def test_the_patterns_a_dotnet_consumer_would_actually_write(make_report, pattern):
+    paths = {
+        "*ModelSnapshot*": "src/Data/AppDbContextModelSnapshot.cs",
+        "*.Designer.cs": "src/Ui/Form1.Designer.cs",
+        "*AspNetCoreGeneratedDocument*": "obj/AspNetCoreGeneratedDocument/Views_Home.cs",
+        "**/obj/**": "src/Api/obj/Debug/gen.cs",
+    }
+    path = paths[pattern]
+    report = make_report({path: {1: 0, 2: 0}})
+    patch = compute_patch_coverage(_diff_of(path), report, PatchPolicy(exclude_globs=(pattern,)))
+
+    assert patch.total_lines == 0, f"{pattern} should have excluded {path}"
