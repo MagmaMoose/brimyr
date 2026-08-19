@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / JS-TS ecosystem runs (brimyr detects these; keep them out of the repo)
+node_modules/
+/coverage/
+.DS_Store
+
+# Claude Code / agent context
+#   .claude/{CLAUDE context,settings.json,decisions,sessions} ARE tracked on purpose.
+.claude/last_output.txt
+.claude/settings.local.json
+.claude/worktrees/
