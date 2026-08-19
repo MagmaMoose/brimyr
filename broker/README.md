@@ -119,8 +119,16 @@ The weekly smoke run is the entire detection mechanism.
 
 ### Still outstanding
 
-- The ACM certificate for `broker-brimyr.magmamoose.com` and the Cloudflare DNS record are
-  created out of band; the leaf takes the cert ARN as a variable rather than inventing one.
+- The ACM certificate for `broker-brimyr.magmamoose.com` is issued out of band; the leaf
+  takes its ARN as a variable rather than inventing one. It must be an **eu-west-1**
+  certificate in account `202518311296` — a *regional* API Gateway custom domain takes a
+  cert from its own region, and the us-east-1 rule people remember is CloudFront's.
+- The Cloudflare DNS record is created out of band: a **proxied CNAME** from
+  `broker-brimyr.magmamoose.com` to the leaf's `target_domain_name` output
+  (`d-xxxx.execute-api.eu-west-1.amazonaws.com`). Not `api_endpoint`, which is the name
+  being created, and **not** `execute_api_endpoint` — that one is disabled on purpose, so
+  pointing at it resolves, completes TLS at the edge, then 403s every request while
+  looking like the security check passing.
 - `magmamoose/infra` still has no account dimension — every leaf sits under
   `terraform/aws/prod/eu-west-1/` with one ambient credential. Until that lands this leaf
   lives here, and moving it is the eventual tidy-up.

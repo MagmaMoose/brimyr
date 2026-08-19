@@ -64,8 +64,8 @@ variable "certificate_arn" {
   type        = string
 
   validation {
-    condition     = can(regex("^arn:aws:acm:eu-west-1:[0-9]{12}:certificate/", var.certificate_arn))
-    error_message = "certificate_arn must be an ACM certificate ARN in eu-west-1 — a regional API Gateway custom domain cannot use a us-east-1 certificate."
+    condition     = can(regex("^arn:aws:acm:eu-west-1:202518311296:certificate/", var.certificate_arn))
+    error_message = "certificate_arn must be an ACM certificate ARN in eu-west-1 AND in account 202518311296 — a regional API Gateway custom domain cannot use a us-east-1 certificate, and a cert ARN from another account (chargate's, most plausibly) fails at apply with an opaque BadRequestException instead."
   }
 }
 
@@ -133,6 +133,15 @@ output "execute_api_endpoint" {
     the only check proving the custom domain is the sole door. See the README.
   EOT
   value       = module.broker.execute_api_endpoint
+}
+
+output "target_domain_name" {
+  description = <<-EOT
+    CNAME broker-brimyr.magmamoose.com at THIS value in Cloudflare, proxied. Not at
+    api_endpoint (that is the name being created) and emphatically not at
+    execute_api_endpoint (deliberately disabled — every request would 403).
+  EOT
+  value       = module.broker.target_domain_name
 }
 
 output "function_name" {

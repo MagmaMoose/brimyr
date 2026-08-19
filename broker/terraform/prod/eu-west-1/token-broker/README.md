@@ -38,10 +38,13 @@ a Terraform resource is a secret stored in plaintext in state. There is no
 parameters, through an IAM statement scoped to `/brimyr/prod` and `/brimyr/prod/*`.
 
 ```bash
+# --overwrite on both: this is the path used for a key rotation and for re-seeding after
+# a failed first attempt, and without it those exit ParameterAlreadyExists. There is no
+# Terraform to fall back on here by design.
 aws ssm put-parameter --profile mm-prd-brimyr --region eu-west-1 \
-  --name /brimyr/prod/app-id --value '<APP_ID>' --type SecureString
+  --name /brimyr/prod/app-id --value '4124432' --type SecureString --overwrite
 aws ssm put-parameter --profile mm-prd-brimyr --region eu-west-1 \
-  --name /brimyr/prod/private-key --value file://<key>.pem --type SecureString
+  --name /brimyr/prod/private-key --value file://<key>.pem --type SecureString --overwrite
 ```
 
 ## Apply
@@ -112,6 +115,13 @@ for i in $(seq 40); do curl -so /dev/null -w '%{http_code} ' \
   MagmaMoose/caldrith#68). Do not nest it.
 - **The certificate.** Issued out of band; its ARN is a variable.
 - **The App identity.** Seeded by hand, as above.
-- **The weekly smoke workflow** (`broker/README.md` step 6). Still owed, and it is the
-  part that matters most: the client fails soft, so a dead broker is *silent* — the PR
-  byline quietly reverts to `github-actions[bot]` with no red check anywhere.
+- **The DNS record.** Cloudflare-proxied CNAME from `broker-brimyr.magmamoose.com` to the
+  `target_domain_name` output — the API Gateway regional target. **Not** to
+  `execute_api_endpoint`: that is disabled on purpose, so the record would resolve, finish
+  TLS at the Cloudflare edge, and 403 every request at the origin — which looks exactly
+  like the "execute-api must return 403" check above passing.
+
+The weekly smoke workflow is **not** outstanding: `.github/workflows/broker-smoke.yml`
+ships in this same change, and `broker/README.md` step 5.4 runs it by hand at go-live. It
+is the part that matters most, because the client fails soft — a dead broker is *silent*,
+the PR byline quietly reverting to `github-actions[bot]` with no red check anywhere.

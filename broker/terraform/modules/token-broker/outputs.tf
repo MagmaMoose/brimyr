@@ -19,3 +19,25 @@ output "function_name" {
 output "role_arn" {
   value = aws_iam_role.lambda.arn
 }
+
+output "target_domain_name" {
+  description = <<-EOT
+    The API Gateway REGIONAL target for the Cloudflare CNAME — a `d-xxxx.execute-api.
+    eu-west-1.amazonaws.com` value. Empty when there is no custom domain (LocalStack).
+
+    This is the last step between `apply` and a working broker, and it is the one value
+    that was previously not exposed anywhere. Without it the obvious guess is to CNAME at
+    `execute_api_endpoint`, which is exactly wrong: that endpoint is deliberately disabled
+    in production, so the record resolves, TLS completes at the Cloudflare edge, and every
+    single request 403s at the origin. The smoke workflow then reports
+    `GET /healthz -> 403`, which matches nothing in either runbook's error ladder — while
+    the leaf README's own "execute-api MUST return 403" check makes the failure look like
+    the security control working correctly.
+  EOT
+  value       = var.domain_name != "" && !var.localstack ? aws_apigatewayv2_domain_name.broker[0].domain_name_configuration[0].target_domain_name : ""
+}
+
+output "target_hosted_zone_id" {
+  description = "Hosted zone of the regional target, for an alias record if DNS ever moves to Route 53."
+  value       = var.domain_name != "" && !var.localstack ? aws_apigatewayv2_domain_name.broker[0].domain_name_configuration[0].hosted_zone_id : ""
+}
