@@ -95,8 +95,8 @@ class _StaticJwksResolver:
 async def test_verify_oidc_token_accepts_a_valid_token(rsa_key):
     token = _make_token(rsa_key)
     claims = await verify_oidc_token(token, "brimyr", key_resolver=_StaticJwksResolver(rsa_key))
-    assert claims["repository"] == "MagmaMoose/brimyr"
-    assert claims["iss"] == GITHUB_OIDC_ISSUER
+    assert claims["repository"] == "MagmaMoose/brimyr"  # nosec B101
+    assert claims["iss"] == GITHUB_OIDC_ISSUER  # nosec B101
 
 
 async def test_verify_oidc_token_rejects_wrong_audience(rsa_key):
@@ -132,7 +132,7 @@ async def test_jwks_resolver_fetches_key_from_transport(rsa_key):
         async with httpx.AsyncClient(transport=_fake_jwks_transport(rsa_key)) as client:
             resolver = JwksResolver(client)
             key = await resolver.get_signing_key_from_jwt(token)
-    assert key is not None
+    assert key is not None  # nosec B101
 
 
 async def test_jwks_resolver_force_refetches_on_unknown_kid(rsa_key):
@@ -164,7 +164,7 @@ async def test_jwks_resolver_force_refetches_on_unknown_kid(rsa_key):
             with pytest.raises(OidcError, match="no signing key"):
                 await resolver.get_signing_key_from_jwt(token)
 
-    assert fetch_count["n"] == 2
+    assert fetch_count["n"] == 2  # nosec B101
 
 
 async def test_jwks_unavailable_raised_on_http_error(rsa_key):
@@ -208,4 +208,4 @@ async def test_jwks_cache_is_reused_within_ttl(rsa_key):
             await _jwks(client)
             await _jwks(client)
 
-    assert fetch_count["n"] == 1
+    assert fetch_count["n"] == 1  # nosec B101

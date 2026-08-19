@@ -5,7 +5,7 @@
 provider "aws" {
   region                      = "eu-west-1"
   access_key                  = "test"  # nosemgrep: terraform.aws.security.aws-provider-static-credentials.aws-provider-static-credentials
-  secret_key                  = "test" # DevSkim: ignore DS173237 - LocalStack's documented fake credential, not a secret
+  secret_key                  = "test"  # nosemgrep: terraform.aws.security.aws-provider-static-credentials.aws-provider-static-credentials  # DevSkim: ignore DS173237 - LocalStack's documented fake credential, not a secret
   s3_use_path_style           = true
   skip_credentials_validation = true
   skip_metadata_api_check     = true

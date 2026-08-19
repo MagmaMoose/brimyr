@@ -31,32 +31,32 @@ class TestAppJwt:
     def test_issuer_matches_app_id(self, rsa_pem):
         token = app_jwt("42", rsa_pem)
         claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims["iss"] == "42"
+        assert claims["iss"] == "42"  # nosec B101
 
     def test_iat_is_backdated_60s(self, rsa_pem):
         now = 1_700_000_000.0
         token = app_jwt("1", rsa_pem, now=now)
         claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims["iat"] == int(now) - 60
+        assert claims["iat"] == int(now) - 60  # nosec B101
 
     def test_exp_is_nine_minutes_ahead(self, rsa_pem):
         now = 1_700_000_000.0
         token = app_jwt("1", rsa_pem, now=now)
         claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims["exp"] == int(now) + 9 * 60
+        assert claims["exp"] == int(now) + 9 * 60  # nosec B101
 
     def test_signs_with_rs256(self, rsa_pem):
         token = app_jwt("1", rsa_pem)
         header = jwt.get_unverified_header(token)
-        assert header["alg"] == "RS256"
+        assert header["alg"] == "RS256"  # nosec B101
 
 
 class TestValidateRepository:
     def test_valid_owner_and_repo(self):
-        assert validate_repository("MagmaMoose", "brimyr") == ("MagmaMoose", "brimyr")
+        assert validate_repository("MagmaMoose", "brimyr") == ("MagmaMoose", "brimyr")  # nosec B101
 
     def test_repo_with_dots_and_underscores(self):
-        assert validate_repository("org", "my_repo.github.io") == ("org", "my_repo.github.io")
+        assert validate_repository("org", "my_repo.github.io") == ("org", "my_repo.github.io")  # nosec B101
 
     def test_double_dot_in_repo_is_rejected(self):
         with pytest.raises(InvalidRepositoryError):
@@ -92,7 +92,7 @@ class TestMintInstallationToken:
         def respond(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/installation"):
                 return httpx.Response(200, json={"id": 7})
-            return httpx.Response(200, json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"})
+            return httpx.Response(200, json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"})  # nosec B105
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             token, expires_at = await mint_installation_token(
@@ -103,8 +103,8 @@ class TestMintInstallationToken:
                 repo="brimyr",
                 permissions={"pull_requests": "write"},
             )
-        assert token == "ghs_x"
-        assert expires_at == "2099-01-01T00:00:00Z"
+        assert token == "ghs_x"  # nosec B101 B105
+        assert expires_at == "2099-01-01T00:00:00Z"  # nosec B101
 
     async def test_owner_and_repo_are_percent_encoded_in_url(self, rsa_pem):
         seen: list[str] = []
@@ -113,7 +113,7 @@ class TestMintInstallationToken:
             seen.append(str(request.url))
             if request.url.path.endswith("/installation"):
                 return httpx.Response(200, json={"id": 1})
-            return httpx.Response(200, json={"token": "t", "expires_at": ""})
+            return httpx.Response(200, json={"token": "t", "expires_at": ""})  # nosec B105
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             await mint_installation_token(
@@ -126,8 +126,8 @@ class TestMintInstallationToken:
             )
 
         installation_url = next(u for u in seen if u.endswith("/installation"))
-        assert "MagmaMoose" in installation_url
-        assert "brimyr" in installation_url
+        assert "MagmaMoose" in installation_url  # nosec B101
+        assert "brimyr" in installation_url  # nosec B101
 
     async def test_invalid_repo_raises_before_any_request(self, rsa_pem):
         called = {"n": 0}
@@ -146,4 +146,4 @@ class TestMintInstallationToken:
                     repo="repo",
                     permissions={},
                 )
-        assert called["n"] == 0
+        assert called["n"] == 0  # nosec B101

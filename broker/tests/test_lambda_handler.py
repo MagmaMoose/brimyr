@@ -44,42 +44,42 @@ def _body(response: dict) -> dict:
 def test_healthz_answers_with_no_configuration_at_all():
     """The first deploy has no SSM parameters yet and must still come up."""
     response = handler(_event("GET", "/healthz"))
-    assert response["statusCode"] == 200
-    assert _body(response) == {"status": "ok"}
-    assert response["headers"]["content-type"] == "application/json"
+    assert response["statusCode"] == 200  # nosec B101
+    assert _body(response) == {"status": "ok"}  # nosec B101
+    assert response["headers"]["content-type"] == "application/json"  # nosec B101
 
 
 def test_readyz_reports_misconfigured_without_secrets():
     response = handler(_event("GET", "/readyz"))
-    assert response["statusCode"] == 503
-    assert _body(response)["status"] == "misconfigured"
+    assert response["statusCode"] == 503  # nosec B101
+    assert _body(response)["status"] == "misconfigured"  # nosec B101
 
 
 def test_readyz_ok_when_configured(monkeypatch):
     monkeypatch.setenv("APP_ID", "123")
     monkeypatch.setenv("PRIVATE_KEY", "-----BEGIN RSA PRIVATE KEY-----\nx\n")
     response = handler(_event("GET", "/readyz"))
-    assert response["statusCode"] == 200
+    assert response["statusCode"] == 200  # nosec B101
 
 
 def test_token_rejects_non_json_before_consulting_config():
     """A malformed request is the caller's fault even on an unfinished deployment."""
     response = handler(_event("POST", "/token", body="not json"))
-    assert response["statusCode"] == 400
-    assert _body(response)["error"] == "invalid_json"
+    assert response["statusCode"] == 400  # nosec B101
+    assert _body(response)["error"] == "invalid_json"  # nosec B101
 
 
 def test_token_missing_fields_is_400():
     response = handler(_event("POST", "/token", body=json.dumps({"owner": "org"})))
-    assert response["statusCode"] == 400
-    assert _body(response)["error"] == "missing_fields"
+    assert response["statusCode"] == 400  # nosec B101
+    assert _body(response)["error"] == "missing_fields"  # nosec B101
 
 
 def test_token_unconfigured_is_503():
     payload = json.dumps({"oidcToken": "x", "owner": "org", "repo": "repo"})
     response = handler(_event("POST", "/token", body=payload))
-    assert response["statusCode"] == 503
-    assert _body(response)["error"] == "config_unavailable"
+    assert response["statusCode"] == 503  # nosec B101
+    assert _body(response)["error"] == "config_unavailable"  # nosec B101
 
 
 def test_base64_encoded_body_is_decoded():
@@ -90,32 +90,32 @@ def test_base64_encoded_body_is_decoded():
     encoded = base64.b64encode(payload.encode()).decode()
     response = handler(_event("POST", "/token", body=encoded, base64_encoded=True))
     # Reached the field check, which means the JSON parsed — the point of the test.
-    assert response["statusCode"] == 400
-    assert _body(response)["error"] == "missing_fields"
+    assert response["statusCode"] == 400  # nosec B101
+    assert _body(response)["error"] == "missing_fields"  # nosec B101
 
 
 def test_unknown_path_is_404():
     response = handler(_event("GET", "/nope"))
-    assert response["statusCode"] == 404
-    assert _body(response)["error"] == "not_found"
+    assert response["statusCode"] == 404  # nosec B101
+    assert _body(response)["error"] == "not_found"  # nosec B101
 
 
 def test_known_path_wrong_method_is_405():
     """FastAPI supplied this distinction implicitly; losing it would turn 'wrong verb'
     into 'no such endpoint', which is a much longer debugging session."""
     response = handler(_event("GET", "/token"))
-    assert response["statusCode"] == 405
-    assert _body(response)["error"] == "method_not_allowed"
+    assert response["statusCode"] == 405  # nosec B101
+    assert _body(response)["error"] == "method_not_allowed"  # nosec B101
 
     response = handler(_event("POST", "/healthz"))
-    assert response["statusCode"] == 405
+    assert response["statusCode"] == 405  # nosec B101
 
 
 def test_trailing_slash_is_the_same_endpoint():
-    assert handler(_event("GET", "/healthz/"))["statusCode"] == 200
+    assert handler(_event("GET", "/healthz/"))["statusCode"] == 200  # nosec B101
 
 
 def test_missing_body_is_treated_as_empty():
     response = handler(_event("POST", "/token"))
-    assert response["statusCode"] == 400
-    assert _body(response)["error"] == "invalid_json"
+    assert response["statusCode"] == 400  # nosec B101
+    assert _body(response)["error"] == "invalid_json"  # nosec B101
