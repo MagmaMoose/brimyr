@@ -23,7 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-from brimyr import __version__
+from brimyr import __version__, broker_client
 from brimyr import git as bgit
 from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
@@ -261,15 +261,36 @@ def _maybe_post_comment(args: argparse.Namespace, summary: str) -> str | None:
 
     slug = args.repo_slug or os.environ.get("GITHUB_REPOSITORY", "")
     number = args.pr_number if args.pr_number else _pr_number_from_event()
+    token, byline = _comment_token(args, slug)
     config = comment_mod.CommentConfig(
         base_url=args.github_api_url
         or os.environ.get("GITHUB_API_URL")
         or "https://api.github.com",
         repo_slug=slug,
         pr_number=number or 0,
-        token=os.environ.get(args.github_token_env, ""),
+        token=token,
     )
-    return comment_mod.post_pr_comment(config, summary).message
+    result = comment_mod.post_pr_comment(config, summary)
+    return f"{result.message}{byline}"
+
+
+def _comment_token(args: argparse.Namespace, slug: str) -> tuple[str, str]:
+    """The token to comment with, and a suffix naming the identity it authors as.
+
+    Tries the broker when one is configured and falls back to GITHUB_TOKEN on ANY
+    failure — a broken broker costs a byline, never a comment and never a merge. The
+    fallback is silent by design, which is what broker-smoke.yml exists to notice.
+    """
+    fallback = os.environ.get(args.github_token_env, "")
+    broker_url = getattr(args, "token_broker_url", "") or ""
+    if not broker_url:
+        return fallback, ""
+
+    owner, _, repo = slug.partition("/")
+    result = broker_client.mint_bot_token(broker_url, owner, repo)
+    if result.ok and result.token:
+        return result.token, " as Brimyr[bot]"
+    return fallback, f" as github-actions[bot] ({result.message})"
 
 
 def _pr_number_from_event() -> int:
@@ -412,6 +433,14 @@ def _add_comment_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--repo-slug", help="owner/repo (default: $GITHUB_REPOSITORY).")
     parser.add_argument("--pr-number", type=int, help="PR number (default: from the event).")
+    parser.add_argument(
+        "--token-broker-url",
+        default="",
+        help=(
+            "Token broker base URL. When set, the comment is authored by Brimyr[bot] "
+            "instead of github-actions[bot]. Falls back silently if the mint fails."
+        ),
+    )
     parser.add_argument(
         "--github-api-url",
         default="",

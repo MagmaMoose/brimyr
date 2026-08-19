@@ -231,7 +231,19 @@ node_modules/
 # Broker (AWS token broker) build + local state
 broker/dist/
 broker/.venv/
-broker/localstack/.terraform/
+# Terraform/OpenTofu working dirs, anywhere under broker/. The provider cache alone is
+# hundreds of MB of vendored binary; state can hold resource attributes.
+broker/**/.terraform/
+broker/**/terraform.tfstate
+broker/**/terraform.tfstate.backup
+broker/**/*.tfplan
+# The LocalStack root's lock is throwaway. The PROD leaf's .terraform.lock.hcl is NOT
+# ignored -- pinning provider hashes is the point of committing it.
 broker/localstack/.terraform.lock.hcl
-broker/localstack/terraform.tfstate
-broker/localstack/terraform.tfstate.backup
+# Production leaf: local backend until MagmaMoose/infra#641 gives infra an account
+# dimension, so real state would otherwise land in git. .terraform.lock.hcl is NOT ignored
+# here (unlike localstack's) — it is a root module against a real account and the exact
+# provider version is part of what gets reviewed.
+broker/terraform/prod/**/.terraform/
+broker/terraform/prod/**/terraform.tfstate
+broker/terraform/prod/**/terraform.tfstate.backup

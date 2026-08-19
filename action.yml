@@ -37,6 +37,16 @@ inputs:
     description: 'Post/update one consolidated patch-coverage comment on the PR. Non-blocking.'
     required: false
     default: 'false'
+  token_broker_url:
+    description: >-
+      Token broker base URL, e.g. https://broker-brimyr.magmamoose.com. When set, the PR
+      comment is authored by Brimyr[bot] rather than github-actions[bot]. Requires the
+      calling job to declare `permissions: id-token: write`. Fails SOFT and SILENTLY: any
+      problem falls back to github_token, so a broken broker costs a byline, never a
+      comment. broker-smoke.yml is what notices.
+    required: false
+    default: ''
+
   github_token:
     description: >-
       Token used to comment. Needs `pull-requests: write`. Defaults to the job
@@ -158,6 +168,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER_IN: ${{ github.event.pull_request.number }}
+        TOKEN_BROKER_URL_IN: ${{ inputs.token_broker_url }}
       run: |
         set -euo pipefail
         json_rel="brimyr-reports/coverage.json"
@@ -192,6 +203,7 @@ runs:
 
         if [ "$PR_COMMENT_IN" = "true" ] && [ -n "${PR_NUMBER_IN:-}" ]; then
           args+=(--pr-comment --pr-number "$PR_NUMBER_IN")
+          [ -n "$TOKEN_BROKER_URL_IN" ] && args+=(--token-broker-url "$TOKEN_BROKER_URL_IN")
         fi
 
         brimyr "${args[@]}"
