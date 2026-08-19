@@ -27,7 +27,9 @@ build-backend = "hatchling.build"
 packages = ["src/brimyr"]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+# pytest-cov is required for brimyr to gate ITSELF: the Python ecosystem runs
+# `pytest --cov --cov-report=xml`, which is an unrecognised argument without it.
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 # Docs tooling (non-default group): `uv run --group docs mkdocs serve|build`.
 docs = ["mkdocs-material>=9.5"]
 
