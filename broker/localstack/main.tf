@@ -41,7 +41,7 @@
 #                            real apply.
 #   The custom domain        `disable_execute_api_endpoint` and the Cloudflare-proxied
 #                            first-level hostname (broker-brimyr.magmamoose.com) are
-#                            production-only. Check the execute-api URL returns 403 after
+#                            production-only. Check the execute-api URL returns 404 after
 #                            the first real apply.
 
 terraform {
