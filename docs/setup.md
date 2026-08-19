@@ -135,3 +135,32 @@ uv run --group docs mkdocs build   # render to ./site (gitignored)
 
 The `docs` dependency group (`mkdocs-material`) is non-default, so `uv sync` and CI
 are unaffected until you opt in with `--group docs`.
+
+## PR comment
+
+Brimyr can post **one** consolidated patch-coverage comment on the pull request —
+the percentage, the threshold, and the changed lines the tests never executed. It
+is updated in place on every push rather than stacked, so a long-running PR keeps
+exactly one comment.
+
+```yaml
+      - uses: magmamoose/brimyr@v1
+        with:
+          pr_comment: 'true'
+          # github_token defaults to the job token (comments as github-actions[bot])
+```
+
+The job needs `pull-requests: write`:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+The comment carries a hidden `<!-- brimyr:pr-summary -->` marker so Brimyr only
+ever edits its own comment — Chargate's summary on the same PR is left alone.
+
+Commenting is **non-blocking**: a missing token, a 403, or a network failure is
+reported on stderr and never changes the gate verdict, the same contract the
+SonarQube step follows.
