@@ -43,34 +43,92 @@ token from minting. A local run that cannot fake it is the correct trade.
 Also unproven locally: the stage throttle (LocalStack accepts but does not enforce it)
 and `disable_execute_api_endpoint`. Verify both after the first real apply.
 
-## Going live — what is still needed
+## Going live
 
-Everything below is deliberately **not** committed. These are the values to supply.
+The identity now exists. What is recorded here is non-secret; the private key is not, and
+never will be, in this repo.
 
-1. **A `Brimyr` GitHub App** — its own App, never shared with chargate. Permissions:
-   `pull_requests: write`, nothing else. Note the App ID and generate a private key.
-2. **An AWS member account** for brimyr, as chargate / nievah / caldrith each have. The
-   justification is blast-radius isolation and per-account SCPs, not Free Tier — Free
-   Tier is pooled across the organization (MagmaMoose/infra#641).
-3. **Seed SSM by hand** — never via Terraform, or the secret lands in Terraform state:
-   ```bash
-   aws ssm put-parameter --name /brimyr/prod/app-id      --value '<APP_ID>'    --type SecureString
-   aws ssm put-parameter --name /brimyr/prod/private-key --value file://key.pem --type SecureString
-   ```
-4. **A real leaf** calling `terraform/modules/token-broker` with `localstack = false`,
-   `secret_path = "/brimyr/prod"`, and
-   `domain_name = "broker-brimyr.magmamoose.com"` — **first-level subdomain**, since
-   Cloudflare's free Universal SSL covers the apex and one label only.
-   `broker.brimyr.magmamoose.com` cannot be proxied; nievah and caldrith are both stuck
-   two labels deep and need renames (MagmaMoose/nievah#187, MagmaMoose/caldrith#68).
-   This depends on `magmamoose/infra` growing an account dimension — every leaf currently
-   sits under `terraform/aws/prod/eu-west-1/` with one ambient credential.
-5. **After the first apply**, curl the `execute_api_endpoint` output. It must return
-   **403**. That is the only check proving the custom domain is the sole door.
-6. **A weekly smoke workflow** against the deployed broker, shipped at the same time and
-   not later. The client fails soft by design, so a broken broker is *silent* — a byline
-   quietly reverting to `github-actions[bot]` and no red check anywhere. The smoke run is
-   the only thing that notices.
+| | |
+|---|---|
+| AWS account | `202518311296` |
+| Region | `eu-west-1` |
+| SSO profile | `mm-prd-brimyr` (portal `https://magmamoose.awsapps.com/start/#`) |
+| GitHub App ID | `4124432` |
+| App private key | **not in this repo.** 2048-bit PKCS#1, `MD5(DER) = 67:b3:e5:7b:90:4e:b1:fd:01:d8:1f:b3:7f:67:fb:7b` — compare against the App settings page before seeding |
+| SSM path | `/brimyr/prod` → `app-id`, `private-key`, both `SecureString` |
+| Hostname | `broker-brimyr.magmamoose.com` (first-level, so Cloudflare can proxy it) |
 
-Until all of that exists, Brimyr's comment posts as `github-actions[bot]`, which is a
-working product — see MagmaMoose/brimyr#13.
+### 1. Sign in
+
+```bash
+aws sso login --profile mm-prd-brimyr
+aws sts get-caller-identity --profile mm-prd-brimyr   # expect Account: 202518311296
+```
+
+### 2. Seed the secrets BY HAND
+
+Never through Terraform — a secret in a resource is a secret in state, and the infra repo
+is public. Run these from the directory holding the key, and delete it afterwards.
+
+```bash
+aws ssm put-parameter --profile mm-prd-brimyr --region eu-west-1 \
+  --name /brimyr/prod/app-id --value '4124432' --type SecureString --overwrite
+
+aws ssm put-parameter --profile mm-prd-brimyr --region eu-west-1 \
+  --name /brimyr/prod/private-key \
+  --value "file://brimyr.2026-08-19.private-key.pem" --type SecureString --overwrite
+```
+
+Verify without printing the key:
+
+```bash
+aws ssm get-parameters-by-path --profile mm-prd-brimyr --region eu-west-1 \
+  --path /brimyr/prod --recursive --with-decryption \
+  --query 'Parameters[].{name:Name,bytes:length(Value)}' --output table
+```
+
+### 3. Install the App on the repos it comments on
+
+`pull_requests: write`, nothing else. The installation **is** the allowlist — the module
+leaves `allowed_repositories` empty on purpose, so a repo the App is not installed on gets
+`app_not_installed` rather than a token.
+
+### 4. Apply
+
+`broker/terraform/prod/eu-west-1/token-broker/` instantiates the module for real. It
+carries an `allowed_account_ids` guard, so an apply under the wrong profile fails before
+creating anything.
+
+### 5. Then verify, in this order
+
+1. `curl -s -o /dev/null -w '%{http_code}' "$(tofu output -raw execute_api_endpoint)"` →
+   **403**. The only proof the custom domain is the sole door.
+2. `GET https://broker-brimyr.magmamoose.com/healthz` → 200.
+3. `GET https://broker-brimyr.magmamoose.com/readyz` → 200. A 503 means the SSM
+   parameters, the IAM statement or the KMS grant are wrong.
+4. Run `.github/workflows/broker-smoke.yml` by hand. It is the only thing that ever
+   notices this breaking — see below.
+5. Set `token_broker_url` on the action and confirm a PR comment is authored by
+   `Brimyr[bot]`. The calling job needs `permissions: id-token: write`.
+
+### Why the smoke workflow is not optional
+
+`brimyr.broker_client` fails **soft and silent**: a broken broker means the byline quietly
+reverts to `github-actions[bot]`. No check goes red, no comment is lost, nobody notices.
+The weekly smoke run is the entire detection mechanism.
+
+### Still outstanding
+
+- The ACM certificate for `broker-brimyr.magmamoose.com` is issued out of band; the leaf
+  takes its ARN as a variable rather than inventing one. It must be an **eu-west-1**
+  certificate in account `202518311296` — a *regional* API Gateway custom domain takes a
+  cert from its own region, and the us-east-1 rule people remember is CloudFront's.
+- The Cloudflare DNS record is created out of band: a **proxied CNAME** from
+  `broker-brimyr.magmamoose.com` to the leaf's `target_domain_name` output
+  (`d-xxxx.execute-api.eu-west-1.amazonaws.com`). Not `api_endpoint`, which is the name
+  being created, and **not** `execute_api_endpoint` — that one is disabled on purpose, so
+  pointing at it resolves, completes TLS at the edge, then 403s every request while
+  looking like the security check passing.
+- `magmamoose/infra` still has no account dimension — every leaf sits under
+  `terraform/aws/prod/eu-west-1/` with one ambient credential. Until that lands this leaf
+  lives here, and moving it is the eventual tidy-up.

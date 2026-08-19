@@ -1,0 +1,236 @@
+# Weekly smoke test against the DEPLOYED broker at broker-brimyr.magmamoose.com.
+#
+# This workflow is the entire detection mechanism for the broker. `brimyr.broker_client`
+# fails soft by design, so a broker that 500s — or whose SSM parameters were rotated away,
+# or whose App installation was revoked — turns nothing red anywhere. Brimyr just posts its
+# PR comment as `github-actions[bot]` instead of `Brimyr[bot]`, which is still a working
+# product, and nobody reads a byline. MagmaMoose/brimyr#11 asks for this workflow at
+# go-live rather than later for exactly that reason.
+#
+# What it proves that `broker/localstack/smoke.py` cannot: A SUCCESSFUL MINT. That needs a
+# JWT signed by GitHub's real Actions OIDC key and the Brimyr App genuinely installed on
+# this repo, so it is only assertable from inside a GitHub Actions job against real AWS —
+# LocalStack emulates AWS, not GitHub. One 200 from POST /token is simultaneously proof of
+# the issuer/JWKS pin, the audience match, the `repository`-claim check, SSM + KMS
+# resolving the App private key, and the App still holding `pull_requests: write`.
+#
+# Not asserted here: the `execute_api_endpoint` 403. That URL is a Terraform output rather
+# than a constant, so it stays a one-off check at first apply (broker/README.md, step 5).
+#
+# GitHub disables scheduled workflows on a repository with 60 days of no activity. On a
+# repo this quiet that is a live failure mode, and a silently disabled smoke test is
+# exactly as useless as no smoke test — `workflow_dispatch` is the manual re-arm, and is
+# also how the go-live runbook drives this the first time.
+name: Broker smoke
+
+on:
+  schedule:
+    # Mondays 07:23 UTC. Off the hour deliberately: GitHub queues every `0 * * * *` job in
+    # the world at once and silently drops runs it cannot place, and a smoke test that did
+    # not run is indistinguishable from the failure it exists to catch.
+    - cron: '23 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read     # the floor; nothing is checked out
+  id-token: write    # mint the Actions OIDC token the broker exchanges
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # The broker is one Lambda behind one HTTP API. If this has not resolved in five
+    # minutes something is wrong that a longer wait will not fix.
+    timeout-minutes: 5
+    env:
+      # Literal, not a repository variable. An indirection here would let someone point
+      # the only broker alarm at something that is not production and keep it green.
+      # First-level subdomain on purpose: Cloudflare's free Universal SSL covers the apex
+      # and one label, so broker.brimyr.magmamoose.com could not be proxied at all.
+      BROKER_URL: https://broker-brimyr.magmamoose.com
+    steps:
+      # No actions/checkout, and no third-party actions at all: nothing in the repo is
+      # needed, and this job holds `id-token: write`. Every action in a job that can mint
+      # an OIDC token for MagmaMoose/brimyr is one more thing that could walk off with
+      # one, so the supply chain here is curl and jq (both preinstalled on the runner).
+      - name: Exchange an Actions OIDC token at the broker
+        run: |
+          set -euo pipefail
+
+          FAILURES=0
+
+          # Rows are appended as each check resolves rather than assembled at the end: if
+          # the step dies somewhere it cannot recover (curl wedged until timeout-minutes,
+          # the runner reclaimed), the summary still shows how far it got — the difference
+          # between "the broker is broken" and "no idea".
+          summary() { printf '%s\n' "$1" >> "${GITHUB_STEP_SUMMARY}"; }
+          pass()    { printf '  PASS  %s\n' "$1"; summary "| ok | $1 |"; }
+          fail()    { printf '::error::%s\n' "$1"; summary "| **FAIL** | $1 |"; FAILURES=$((FAILURES + 1)); }
+
+          # BEFORE ANYTHING IS PRINTED. This is a bearer credential that mints OIDC tokens
+          # for this job and the runner does not register it as a secret itself; masking it
+          # first means no later line — including a printed upstream body — can be the thing
+          # that leaks it.
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::add-mask::${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+          fi
+
+          summary "## Broker smoke — \`${BROKER_URL}\`"
+          summary ""
+          summary "| | check |"
+          summary "|---|---|"
+
+          # One request; sets `code` and `body`.
+          #
+          # --retry covers curl's transient set (connect failures, timeouts, 429, 5xx) and
+          # nothing else on purpose — a 403 repo_mismatch is an answer, not a blip, and
+          # retrying it only delays the report. A weekly alarm that fires on one dropped
+          # packet gets muted, and a muted alarm is no alarm.
+          #
+          # THE BODY GOES TO A FILE, NOT STDOUT, *BECAUSE* OF --retry. curl writes every
+          # attempt's body to stdout, so a 503 that curl then successfully retries leaves
+          # `<html>Service Unavailable</html>{"value":"..."}` in one string: jq extracts
+          # nothing and the run reports the self-contradicting "-> 200 (want 200 with a
+          # .value)". A healthy broker, a red weekly alarm — exactly the muted-alarm
+          # failure the paragraph above is trying to avoid. curl TRUNCATES -o between
+          # retries, so the file holds only the final attempt. The file is read once and
+          # deleted immediately: a 200 from /token carries a live installation token and
+          # nothing that outlives this step may hold it.
+          request() {
+            local out; out="$(mktemp)"
+            if ! code="$(curl -sS --max-time 20 --retry 2 --retry-delay 5 \
+                              --retry-connrefused -o "${out}" -w '%{http_code}' "$@")"; then
+              code='000'   # curl itself failed: DNS, TLS, or the timeout above
+            fi
+            body="$(cat "${out}" 2>/dev/null || true)"
+            rm -f "${out}"
+          }
+
+          # Anything the far end sent is UNTRUSTED BYTES, and stdout in Actions is a command
+          # channel. A body containing `::stop-commands::<tok>` switches off workflow-command
+          # processing, after which every ::add-mask:: below is logged as literal text —  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+          # printing the OIDC JWT and the minted installation token in full instead of
+          # masking them. That is not hypothetical here: both places a body gets printed are
+          # failure paths, i.e. exactly when the response is coming from something other than
+          # the healthy broker (a proxy error page, or a hijacked CNAME for this public
+          # hostname). `::` is broken so no line can ever be read as a command, CRs are
+          # dropped so none can be forged, and the result is truncated.
+          # `|` is escaped too: fail() writes into the summary's markdown table, and one
+          # unescaped pipe from a broker error string collapses the row.
+          safe() { printf '%s' "${1:0:200}" | tr -d '\r' | sed -e 's/::/;;/g' -e 's/|/\\|/g'; }
+
+          echo 'Liveness and readiness'
+
+          request "${BROKER_URL}/healthz"
+          if [ "${code}" = '200' ]; then
+            pass 'GET /healthz -> 200'
+          else
+            # Truncated, and to the log only: a Cloudflare or API Gateway error page is
+            # HTML by the kilobyte and would bury the table.
+            printf '        body: %s\n' "$(safe "${body}")"
+            fail "GET /healthz -> ${code} (want 200)"
+          fi
+
+          request "${BROKER_URL}/readyz"
+          if [ "${code}" = '200' ]; then
+            pass 'GET /readyz -> 200'
+          else
+            printf '        body: %s\n' "$(safe "${body}")"
+            # 503 here means "deployed but not finished" — load_config could not resolve
+            # app-id/private-key out of /brimyr/prod. Those are seeded by hand, so a
+            # rotation that never landed and a changed IAM/KMS grant look identical.
+            fail "GET /readyz -> ${code} (want 200; 503 = the App identity does not resolve from SSM)"
+          fi
+
+          echo 'Actions OIDC token'
+
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            # Both are injected only into a job holding `id-token: write`. Absent means the
+            # permissions block above was edited — this is a red build about this file, not
+            # about the broker.
+            fail 'no Actions OIDC endpoint in the environment (the job is missing id-token: write)'
+            oidc_token=''
+          else
+            # The endpoint URL already carries ?api-version=, so the audience is appended
+            # with & — a second ? is a 400. `brimyr` is the audience app/config.py pins as
+            # oidc_audience; asserting it here is the point, since a drifted audience is
+            # rejected as invalid_oidc and shows up nowhere else.
+            request -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+                    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=brimyr"
+
+            # `body` holds {"value": "<jwt>"} right now. Nothing between here and
+            # ::add-mask:: writes to stdout — that gap is the only window in which the JWT  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+            # is unmasked, and it is deliberately two lines with no output in them.
+            # `|| true` because a non-JSON body (a proxy error page) makes jq exit
+            # non-zero, and set -e would take the step down before the verdict is written.
+            oidc_token="$(jq -r '.value // empty' <<<"${body}" 2>/dev/null || true)"
+            if [ -n "${oidc_token}" ]; then echo "::add-mask::${oidc_token}"; fi  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+            body=''
+
+            if [ "${code}" = '200' ] && [ -n "${oidc_token}" ]; then
+              # Length, never value — a prefix of a JWT is still a piece of a credential.
+              pass "minted an Actions OIDC token (aud=brimyr, ${#oidc_token} chars)"
+            else
+              fail "Actions OIDC token request -> ${code} (want 200 with a .value)"
+              oidc_token=''
+            fi
+          fi
+
+          echo 'The mint'
+
+          if [ -z "${oidc_token}" ]; then
+            fail 'POST /token skipped — there was no OIDC token to exchange'
+          else
+            # owner/repo are literal rather than interpolated from the `github.repository`
+            # context (which the expression evaluator would substitute into this run block
+            # before bash ever sees it) because they are half of the assertion, not a
+            # parameter: app.broker compares "owner/repo"
+            # against the OIDC `repository` claim and 403s repo_mismatch when they differ.
+            # That comparison is what stops repo A minting a token for repo B, so a copy of
+            # this file running from a fork must trip it, not quietly test a different repo.
+            payload="$(jq -nc --arg token "${oidc_token}" \
+              '{oidcToken: $token, owner: "MagmaMoose", repo: "brimyr"}')"
+
+            # The payload rides in argv rather than stdin (`--data-binary @-`) because curl
+            # cannot rewind stdin to retry, and losing the retry costs more than a masked
+            # token being briefly visible in the process table of a single-tenant runner.
+            request -X POST -H 'Content-Type: application/json' \
+                    --data-binary "${payload}" "${BROKER_URL}/token"
+            payload=''
+
+            token="$(jq -r '.token // empty' <<<"${body}" 2>/dev/null || true)"
+            if [ -n "${token}" ]; then echo "::add-mask::${token}"; fi  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+            repository="$(safe "$(jq -r '.repository // empty' <<<"${body}" 2>/dev/null || true)")"
+            expires_at="$(safe "$(jq -r '.expires_at // empty' <<<"${body}" 2>/dev/null || true)")"
+            # Through safe() as well: fail() writes into ::error:: and the summary table,
+            # so a newline here would inject a workflow command and a `|` would break the
+            # table — on the one workflow whose job is to be unmistakably red.
+            broker_error="$(safe "$(jq -r '.error // empty' <<<"${body}" 2>/dev/null || true)")"
+            # Everything worth keeping is extracted, so drop the rest: no later line — not
+            # a debug echo added in six months — can then print a 200 body. `.token` is a
+            # live credential with pull_requests: write on this repo.
+            body=''
+
+            if [ "${code}" = '200' ] && [ -n "${token}" ]; then
+              pass "POST /token -> 200 (installation token, ${#token} chars, expires ${expires_at})"
+              if [ "${repository}" = 'MagmaMoose/brimyr' ]; then
+                pass 'the minted token is scoped to MagmaMoose/brimyr'
+              else
+                fail "POST /token echoed repository=${repository} (want MagmaMoose/brimyr)"
+              fi
+            else
+              # The error ladder is the diagnosis, and it is worth reading before touching
+              # anything: app_not_installed = the App was removed from the repo,
+              # invalid_oidc = the audience or the issuer pin moved, config_unavailable =
+              # /brimyr/prod stopped resolving, mint_failed = GitHub refused.
+              fail "POST /token -> ${code} (want 200 with a .token)${broker_error:+ (error=${broker_error})}"
+            fi
+          fi
+
+          summary ""
+          if [ "${FAILURES}" -gt 0 ]; then
+            summary "**${FAILURES} check(s) failed.** Until this is fixed Brimyr's PR comments post as \`github-actions[bot]\` — the product still works, which is why nothing else is red. Runbook: \`broker/README.md\`."
+            printf '::error::brimyr token broker smoke failed: %s check(s). PR comments are silently reverting to github-actions[bot].\n' "${FAILURES}"
+            exit 1
+          fi
+          summary "All checks passed — a real mint against the deployed broker, so the App installation, the SSM secrets, the issuer pin and the audience are all intact."
+          echo 'All checks passed.'
