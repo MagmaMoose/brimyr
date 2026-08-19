@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import jwt
@@ -12,8 +12,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.oidc import JwksResolver, JwksUnavailable, OidcError, _jwks_cache, verify_oidc_token
 from app.config import GITHUB_OIDC_ISSUER
+from app.oidc import JwksResolver, JwksUnavailable, OidcError, _jwks_cache, verify_oidc_token
 
 
 @pytest.fixture(scope="module")
@@ -23,10 +23,14 @@ def rsa_key():
 
 @pytest.fixture(scope="module")
 def public_pem(rsa_key):
-    return rsa_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode()
+    return (
+        rsa_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +61,7 @@ def _fake_jwks_transport(key) -> httpx.MockTransport:
 
     def _b64url(n: int) -> str:
         import base64
+
         length = (n.bit_length() + 7) // 8
         return base64.urlsafe_b64encode(n.to_bytes(length, "big")).rstrip(b"=").decode()
 
@@ -147,13 +152,24 @@ async def test_jwks_resolver_force_refetches_on_unknown_kid(rsa_key):
 
         def _b64url(n: int) -> str:
             import base64
+
             length = (n.bit_length() + 7) // 8
             return base64.urlsafe_b64encode(n.to_bytes(length, "big")).rstrip(b"=").decode()
 
-        return jwt.PyJWKSet.from_dict({
-            "keys": [{"kty": "RSA", "kid": "other-kid", "use": "sig", "alg": "RS256",
-                      "n": _b64url(numbers.n), "e": _b64url(numbers.e)}]
-        })
+        return jwt.PyJWKSet.from_dict(
+            {
+                "keys": [
+                    {
+                        "kty": "RSA",
+                        "kid": "other-kid",
+                        "use": "sig",
+                        "alg": "RS256",
+                        "n": _b64url(numbers.n),
+                        "e": _b64url(numbers.e),
+                    }
+                ]
+            }
+        )
 
     with (
         patch("app.oidc._fetch_jwks", side_effect=counting_fetch),
@@ -189,15 +205,26 @@ async def test_jwks_cache_is_reused_within_ttl(rsa_key):
 
     def _b64url(n: int) -> str:
         import base64
+
         length = (n.bit_length() + 7) // 8
         return base64.urlsafe_b64encode(n.to_bytes(length, "big")).rstrip(b"=").decode()
 
     async def counting_fetch(_client):
         fetch_count["n"] += 1
-        return jwt.PyJWKSet.from_dict({
-            "keys": [{"kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256",
-                      "n": _b64url(numbers.n), "e": _b64url(numbers.e)}]
-        })
+        return jwt.PyJWKSet.from_dict(
+            {
+                "keys": [
+                    {
+                        "kty": "RSA",
+                        "kid": "k1",
+                        "use": "sig",
+                        "alg": "RS256",
+                        "n": _b64url(numbers.n),
+                        "e": _b64url(numbers.e),
+                    }
+                ]
+            }
+        )
 
     with (
         patch("app.oidc._fetch_jwks", side_effect=counting_fetch),
@@ -205,6 +232,7 @@ async def test_jwks_cache_is_reused_within_ttl(rsa_key):
     ):
         async with httpx.AsyncClient() as client:
             from app.oidc import _jwks
+
             await _jwks(client)
             await _jwks(client)
 
