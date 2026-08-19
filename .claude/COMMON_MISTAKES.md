@@ -4,22 +4,22 @@
   error (exit `2`, build red), never a 0% gate failure — `runner.RunResult.broken`
   + `gate.decide_gate(broken=...)`.
 - **The denominator is *changed executable* lines.** Blanks/comments are excluded
-  (coverage tools never report them) and files the report doesn't mention
-  contribute nothing (diff-cover behaviour). Nothing coverable changed ⇒ vacuous
-  100% pass, not a failure.
+  and files the report doesn't mention contribute nothing (diff-cover behaviour).
+  Nothing coverable changed ⇒ vacuous 100% pass, not a failure.
 - **Never import I/O into `coverage/`.** No `subprocess`, `os`, network, or
   Actions code — the purity is the design, not an accident.
 - **Never hand-bump the version.** python-semantic-release writes both
-  `pyproject.toml` and `src/brimyr/__init__.py`.
-- **Shallow clones break merge-base** → `git.ShallowCloneError` → exit 2. CI must
-  fetch enough history.
+  `pyproject.toml` and `src/brimyr/__init__.py`. It does not re-lock, so
+  `uv.lock` lags a release — any `uv run` fixes it; commit that diff.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
-  prefix-stripped, then suffix in either direction — fix matching there, never at
-  the call sites.
-- **.NET has an empty `sonar_property` on purpose** (it needs SonarScanner for
-  .NET's begin/end, not a `-D` property). Don't "fix" it.
-- **CI runs `ruff format --check` as well as `ruff check`** — format before
-  pushing or the build goes red on whitespace.
-- **`uv.lock` drifts every release.** semantic-release bumps `pyproject.toml`
-  but never re-locks, so `uv.lock`'s `brimyr` version lags. Any `uv run` silently
-  fixes it — commit that one-line diff, don't revert it.
+  prefix-stripped, then suffix either way — fix matching there, not the callers.
+- **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.
+- **`broker/` is a separate project** with its own deps, ruff config and CI job.
+  Root ruff excludes it and root pytest ignores it; run `make -C broker test`.
+- **Cost is a correctness property.** `memory_size` >512 MB pushes Lambda compute
+  out of the always-free 400k GB-s under load, and `throttle_rate_limit` raises
+  the ceiling linearly — sustained abuse is ~$2.91/mo at 1 rps/512 MB vs ~$16.81
+  at the module defaults. The broker account has **no 12-month free tier**: API
+  Gateway and S3 bill from unit one, while Lambda, Logs, SSM, ACM and SNS are
+  always free. A two-label hostname costs ~$10/mo (Cloudflare Universal SSL
+  covers the apex and one label only).

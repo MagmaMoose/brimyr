@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   pull-requests: write   # post/update the patch-coverage comment
+  id-token: write        # mint the Actions OIDC token the broker exchanges
 
 jobs:
   coverage:
@@ -34,3 +35,7 @@ jobs:
           checkout: 'false'   # already checked out with full history above
           threshold: '80'
           pr_comment: 'true'  # one consolidated comment, updated in place
+          # Authors the comment as Brimyr[bot] instead of github-actions[bot]. Fails SOFT
+          # and SILENTLY: any problem falls back to the job token, so the comment still
+          # posts and only the byline changes. broker-smoke.yml is what notices.
+          token_broker_url: https://broker-brimyr.magmamoose.com

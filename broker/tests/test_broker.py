@@ -149,7 +149,8 @@ async def test_successful_mint_returns_a_scoped_token(config, keypair):
         if request.url.path.endswith("/installation"):
             return httpx.Response(200, json={"id": 42})
         return httpx.Response(
-            200, json={"token": "ghs_minted", "expires_at": "2026-08-19T18:00:00Z"}  # nosec B105
+            200,
+            json={"token": "ghs_minted", "expires_at": "2026-08-19T18:00:00Z"},  # nosec B105
         )
 
     token = _oidc(key)
