@@ -11,6 +11,42 @@ copy, the Terraform is a shared-shaped module — see
 > This is a **separate deployable** from the `brimyr` CLI. The CLI is stdlib-only and
 > dependency-free; nothing in `src/brimyr` imports anything here, and it never will.
 
+## Cost — read before changing any infrastructure setting
+
+**This bill is paid out of one person's salary.** Every setting in the Terraform is a
+spend control. Default to the cheapest thing that works, and if you raise a limit, write
+the new worst case down next to it.
+
+**There is no hard spend cap in AWS.** A budget *alarms*; it does not stop anything. On a
+public, unauthenticated endpoint the API Gateway stage throttle is the only real cap.
+
+This account is **not** in a 12-month free-tier window — eligibility dates from the
+organization's management account, so a member account created later starts with expired
+allowances. What still applies:
+
+| Always free, never expires | Billed from the first unit |
+|---|---|
+| Lambda 1M requests + 400,000 GB-s/month | API Gateway HTTP API, $1.00/million |
+| CloudWatch Logs 5 GB ingestion | S3 storage (~$0.00013/mo for one zip) |
+| SSM Parameter Store Standard, public ACM certs, SNS first 1,000 emails, first 2 Budgets | |
+
+Worst case if the endpoint were hammered continuously for a month:
+
+| | requests/mo | API GW | Lambda | logs | total |
+|---|---|---|---|---|---|
+| module defaults (2 rps, 1024 MB) | 5.18M | $5.18 | $11.45 | $0.18 | **$16.81** |
+| brimyr's settings (1 rps, 512 MB) | 2.59M | $2.59 | $0.32 | $0.00 | **$2.91** |
+
+At realistic use — a few hundred requests a month — it is fractions of a cent.
+
+Two settings do most of the work. `memory_size` above 512 MB pushes Lambda compute out of
+the always-free 400,000 GB-s under load; `throttle_rate_limit` raises the ceiling linearly.
+Neither needs raising: real traffic is a handful of requests per pull request.
+
+One more: the hostname must stay a **first-level** subdomain. Cloudflare's free Universal
+SSL covers the apex and one label, so `broker-brimyr.magmamoose.com` is free while
+`broker.brimyr.magmamoose.com` would need Advanced Certificate Manager at ~$10/month.
+
 ## The local loop
 
 ```bash
