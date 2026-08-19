@@ -65,7 +65,7 @@ jobs:
         uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: release
-          versioning-tool: gitversion
+          versioning-tool: semantic-release-python
           environment: prod
           environments: '["prod"]'
           prerelease-identifiers: '{}'
