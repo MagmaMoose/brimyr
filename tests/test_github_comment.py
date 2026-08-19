@@ -46,7 +46,7 @@ class _FakeOpener:
 
 
 def _config(**over: Any) -> CommentConfig:
-    base = {"repo_slug": "MagmaMoose/brimyr", "pr_number": 7, "token": "t0ken"}
+    base = {"repo_slug": "MagmaMoose/brimyr", "pr_number": 7, "token": "t0ken"}  # nosec B105
     base.update(over)
     return CommentConfig(**base)
 
@@ -55,11 +55,11 @@ def test_creates_a_comment_when_none_exists():
     opener = _FakeOpener([[]])  # empty first page -> no prior comment
     result = post_pr_comment(_config(), "## body", opener=opener)
 
-    assert result.ok and result.action == "created"
+    assert result.ok and result.action == "created"  # nosec B101
     method, url, body = opener.calls[-1]
-    assert method == "POST"
-    assert url.endswith("/repos/MagmaMoose/brimyr/issues/7/comments")
-    assert body is not None and body["body"].startswith(SUMMARY_MARKER)
+    assert method == "POST"  # nosec B101
+    assert url.endswith("/repos/MagmaMoose/brimyr/issues/7/comments")  # nosec B101
+    assert body is not None and body["body"].startswith(SUMMARY_MARKER)  # nosec B101
 
 
 def test_updates_the_prior_marked_comment_in_place():
@@ -67,11 +67,11 @@ def test_updates_the_prior_marked_comment_in_place():
     opener = _FakeOpener([prior])
     result = post_pr_comment(_config(), "## new", opener=opener)
 
-    assert result.ok and result.action == "updated"
+    assert result.ok and result.action == "updated"  # nosec B101
     method, url, body = opener.calls[-1]
-    assert method == "PATCH"
-    assert url.endswith("/repos/MagmaMoose/brimyr/issues/comments/42")
-    assert body is not None and "## new" in body["body"]
+    assert method == "PATCH"  # nosec B101
+    assert url.endswith("/repos/MagmaMoose/brimyr/issues/comments/42")  # nosec B101
+    assert body is not None and "## new" in body["body"]  # nosec B101
 
 
 def test_ignores_comments_owned_by_another_tool():
@@ -80,8 +80,8 @@ def test_ignores_comments_owned_by_another_tool():
     opener = _FakeOpener([others])
     result = post_pr_comment(_config(), "## body", opener=opener)
 
-    assert result.action == "created"  # posted its own, left chargate's alone
-    assert opener.calls[-1][0] == "POST"
+    assert result.action == "created"  # posted its own, left chargate's alone  # nosec B101
+    assert opener.calls[-1][0] == "POST"  # nosec B101
 
 
 def test_marker_is_not_duplicated_when_already_present():
@@ -89,13 +89,13 @@ def test_marker_is_not_duplicated_when_already_present():
     post_pr_comment(_config(), f"{SUMMARY_MARKER}\n## body", opener=opener)
 
     body = opener.calls[-1][2]
-    assert body is not None and body["body"].count(SUMMARY_MARKER) == 1
+    assert body is not None and body["body"].count(SUMMARY_MARKER) == 1  # nosec B101
 
 
 @pytest.mark.parametrize(
     "over, missing",
     [
-        ({"token": ""}, "token"),
+        ({"token": ""}, "token"),  # nosec B105
         ({"repo_slug": ""}, "repo_slug"),
         ({"pr_number": 0}, "pr_number"),
     ],
@@ -104,9 +104,9 @@ def test_skips_cleanly_when_config_is_incomplete(over, missing):
     opener = _FakeOpener()
     result = post_pr_comment(_config(**over), "## body", opener=opener)
 
-    assert not result.ok and result.action == "skipped"
-    assert missing in result.message
-    assert opener.calls == []  # never touched the network
+    assert not result.ok and result.action == "skipped"  # nosec B101
+    assert missing in result.message  # nosec B101
+    assert opener.calls == []  # never touched the network  # nosec B101
 
 
 def test_http_error_never_raises_and_never_gates():
@@ -114,16 +114,16 @@ def test_http_error_never_raises_and_never_gates():
     opener = _FakeOpener([err])
     result = post_pr_comment(_config(), "## body", opener=opener)
 
-    assert not result.ok
-    assert "403" in result.message
-    assert result.errors
+    assert not result.ok  # nosec B101
+    assert "403" in result.message  # nosec B101
+    assert result.errors  # nosec B101
 
 
 def test_transport_error_never_raises():
     opener = _FakeOpener([urllib.error.URLError("no route to host")])
     result = post_pr_comment(_config(), "## body", opener=opener)
 
-    assert not result.ok and "no route" in result.message
+    assert not result.ok and "no route" in result.message  # nosec B101
 
 
 def test_pagination_stops_on_a_short_page():
@@ -131,12 +131,12 @@ def test_pagination_stops_on_a_short_page():
     opener = _FakeOpener([full, [{"id": 999, "body": f"{SUMMARY_MARKER}\nold"}]])
     result = post_pr_comment(_config(), "## body", opener=opener)
 
-    assert result.action == "updated"
-    assert opener.calls[-1][1].endswith("/issues/comments/999")
+    assert result.action == "updated"  # nosec B101
+    assert opener.calls[-1][1].endswith("/issues/comments/999")  # nosec B101
 
 
 def test_honours_a_ghes_base_url():
     opener = _FakeOpener([[]])
     post_pr_comment(_config(base_url="https://ghe.example.com/api/v3"), "b", opener=opener)
 
-    assert opener.calls[-1][1].startswith("https://ghe.example.com/api/v3/repos/")
+    assert opener.calls[-1][1].startswith("https://ghe.example.com/api/v3/repos/")  # nosec B101
