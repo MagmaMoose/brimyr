@@ -65,7 +65,7 @@ jobs:
           # Lightweight, matching what consumers already resolve for @v1.
           git tag -f "${MAJOR_TAG}" "${TARGET}"
           git push --force \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" \
             "refs/tags/${MAJOR_TAG}"
 
           echo "### Major tag \`${MAJOR_TAG}\` -> \`${RELEASE_TAG}\`" >> "$GITHUB_STEP_SUMMARY"
