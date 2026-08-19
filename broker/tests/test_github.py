@@ -91,7 +91,8 @@ class TestMintInstallationToken:
             if request.url.path.endswith("/installation"):
                 return httpx.Response(200, json={"id": 7})
             return httpx.Response(
-                200, json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"}  # nosec B105
+                200,
+                json={"token": "ghs_x", "expires_at": "2099-01-01T00:00:00Z"},  # nosec B105
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
