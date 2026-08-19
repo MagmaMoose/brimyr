@@ -158,12 +158,12 @@ jobs:
                     "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=brimyr"
 
             # `body` holds {"value": "<jwt>"} right now. Nothing between here and
-            # ::add-mask:: writes to stdout — that gap is the only window in which the JWT
+            # ::add-mask:: writes to stdout — that gap is the only window in which the JWT  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
             # is unmasked, and it is deliberately two lines with no output in them.
             # `|| true` because a non-JSON body (a proxy error page) makes jq exit
             # non-zero, and set -e would take the step down before the verdict is written.
             oidc_token="$(jq -r '.value // empty' <<<"${body}" 2>/dev/null || true)"
-            if [ -n "${oidc_token}" ]; then echo "::add-mask::${oidc_token}"; fi
+            if [ -n "${oidc_token}" ]; then echo "::add-mask::${oidc_token}"; fi  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
             body=''
 
             if [ "${code}" = '200' ] && [ -n "${oidc_token}" ]; then
@@ -198,7 +198,7 @@ jobs:
             payload=''
 
             token="$(jq -r '.token // empty' <<<"${body}" 2>/dev/null || true)"
-            if [ -n "${token}" ]; then echo "::add-mask::${token}"; fi
+            if [ -n "${token}" ]; then echo "::add-mask::${token}"; fi  # nosemgrep: yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
             repository="$(safe "$(jq -r '.repository // empty' <<<"${body}" 2>/dev/null || true)")"
             expires_at="$(safe "$(jq -r '.expires_at // empty' <<<"${body}" 2>/dev/null || true)")"
             # Through safe() as well: fail() writes into ::error:: and the summary table,
