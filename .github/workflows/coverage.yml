@@ -14,7 +14,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write   # post/update the patch-coverage comment
 
 jobs:
   coverage:
@@ -33,3 +33,4 @@ jobs:
         with:
           checkout: 'false'   # already checked out with full history above
           threshold: '80'
+          pr_comment: 'true'  # one consolidated comment, updated in place

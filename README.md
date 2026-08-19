@@ -109,6 +109,7 @@ jobs:
         with:
           checkout: 'false'                     # you already checked out
           threshold: '85'
+          pr_comment: 'true'                    # one PR comment, updated in place
           # sonar_url: https://sonar.example.com
           # sonar_token: ${{ secrets.SONAR_TOKEN }}
 ```
