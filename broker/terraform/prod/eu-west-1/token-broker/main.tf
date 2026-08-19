@@ -129,7 +129,7 @@ output "api_endpoint" {
 
 output "execute_api_endpoint" {
   description = <<-EOT
-    The generated execute-api URL. MUST return 403 after the first apply — that curl is
+    The generated execute-api URL. MUST return 404 after the first apply — that curl is
     the only check proving the custom domain is the sole door. See the README.
   EOT
   value       = module.broker.execute_api_endpoint
@@ -139,7 +139,7 @@ output "target_domain_name" {
   description = <<-EOT
     CNAME broker-brimyr.magmamoose.com at THIS value in Cloudflare, proxied. Not at
     api_endpoint (that is the name being created) and emphatically not at
-    execute_api_endpoint (deliberately disabled — every request would 403).
+    execute_api_endpoint (deliberately disabled — every request would 404).
   EOT
   value       = module.broker.target_domain_name
 }

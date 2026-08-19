@@ -72,14 +72,14 @@ State is **local** for now (`versions.tf` carries the TODO). It is gitignored; i
 secret, but it holds every resource id, so losing it means importing the stack back rather
 than re-applying it.
 
-## After the first apply — the 403 check
+## After the first apply — the closed-door check
 
 ```bash
 curl -si "$(tofu output -raw execute_api_endpoint)/healthz" | head -1
-# HTTP/2 403        <- REQUIRED
+# HTTP/2 404        <- REQUIRED
 ```
 
-`execute_api_endpoint` **must return 403.** This is not a nicety. With a custom domain in
+`execute_api_endpoint` **must return 404.** This is not a nicety. With a custom domain in
 front, the generated `https://<id>.execute-api.eu-west-1.amazonaws.com` URL is a second
 door into the same function that bypasses Cloudflare entirely, and it is the one an
 attacker finds first. `localstack = false` plus a non-empty `domain_name` makes the module
@@ -103,7 +103,7 @@ for i in $(seq 40); do curl -so /dev/null -w '%{http_code} ' \
 | Output | Use |
 |---|---|
 | `api_endpoint` | `https://broker-brimyr.magmamoose.com` — what `BRIMYR_BROKER_URL` points at |
-| `execute_api_endpoint` | the URL that **must** 403; see above |
+| `execute_api_endpoint` | the URL that **must** 404; see above |
 | `function_name` | `aws logs tail /aws/lambda/brimyr-broker --follow` when the smoke run goes red |
 
 ## Not owned here
@@ -118,8 +118,8 @@ for i in $(seq 40); do curl -so /dev/null -w '%{http_code} ' \
 - **The DNS record.** Cloudflare-proxied CNAME from `broker-brimyr.magmamoose.com` to the
   `target_domain_name` output — the API Gateway regional target. **Not** to
   `execute_api_endpoint`: that is disabled on purpose, so the record would resolve, finish
-  TLS at the Cloudflare edge, and 403 every request at the origin — which looks exactly
-  like the "execute-api must return 403" check above passing.
+  TLS at the Cloudflare edge, and 404 every request at the origin — which looks exactly
+  like the "execute-api must return 404" check above passing.
 
 The weekly smoke workflow is **not** outstanding: `.github/workflows/broker-smoke.yml`
 ships in this same change, and `broker/README.md` step 5.4 runs it by hand at go-live. It

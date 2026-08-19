@@ -102,7 +102,10 @@ creating anything.
 ### 5. Then verify, in this order
 
 1. `curl -s -o /dev/null -w '%{http_code}' "$(tofu output -raw execute_api_endpoint)"` →
-   **403**. The only proof the custom domain is the sole door.
+   **404**. AWS answers a disabled execute-api endpoint with 404, not the 403 the
+   phrasing everywhere suggests — verified against both brimyr's and chargate's live
+   endpoints. It is still the only proof the custom domain is the sole door; confirm the
+   cause with `aws apigatewayv2 get-api --api-id <id> --query DisableExecuteApiEndpoint`.
 2. `GET https://broker-brimyr.magmamoose.com/healthz` → 200.
 3. `GET https://broker-brimyr.magmamoose.com/readyz` → 200. A 503 means the SSM
    parameters, the IAM statement or the KMS grant are wrong.
@@ -127,7 +130,7 @@ The weekly smoke run is the entire detection mechanism.
   `broker-brimyr.magmamoose.com` to the leaf's `target_domain_name` output
   (`d-xxxx.execute-api.eu-west-1.amazonaws.com`). Not `api_endpoint`, which is the name
   being created, and **not** `execute_api_endpoint` — that one is disabled on purpose, so
-  pointing at it resolves, completes TLS at the edge, then 403s every request while
+  pointing at it resolves, completes TLS at the edge, then 404s every request while
   looking like the security check passing.
 - `magmamoose/infra` still has no account dimension — every leaf sits under
   `terraform/aws/prod/eu-west-1/` with one ambient credential. Until that lands this leaf
