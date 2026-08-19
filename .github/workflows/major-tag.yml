@@ -1,0 +1,71 @@
+# Move the floating major action tag (v1, v2, ...) onto each stable release.
+#
+# Consumers pin `magmamoose/brimyr@v1` (README, docs/setup.md) and
+# `rev: v1` in .pre-commit-config, so that tag has to track the latest stable
+# v1.x or every consumer silently stays on whatever it last pointed at — which
+# is exactly what happened between v1.0.0 (June) and v1.0.2 (August).
+#
+# This lives in its own file on purpose: .github/workflows/release.yml is
+# provisioned by caldrith without `create_only`, so anything added there is
+# overwritten on the next sync. Diatreme has no input for maintaining a major
+# tag (it moves its own @v2 in its own release.yaml, which is why `diatreme`
+# sits in that file's skip_repos).
+#
+# `release: published` fires after Diatreme publishes the GitHub Release, so the
+# tag it names already exists. Pushing a tag with GITHUB_TOKEN does not trigger
+# further workflows, so this cannot loop.
+name: Major tag
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to point the major tag at, e.g. v1.0.3'
+        required: true
+
+permissions:
+  contents: write   # force-push the major tag
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Move the major tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease || false }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "${IS_PRERELEASE}" = "true" ]; then
+            echo "::notice::${RELEASE_TAG} is a prerelease — leaving the major tag alone."
+            exit 0
+          fi
+
+          # vX.Y.Z -> vX. Anything else (a package-scoped or non-semver tag) is skipped
+          # rather than guessed at.
+          if [[ ! "${RELEASE_TAG}" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${RELEASE_TAG} is not a plain vX.Y.Z tag — nothing to move."
+            exit 0
+          fi
+          MAJOR_TAG="v${BASH_REMATCH[1]}"
+
+          TARGET="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          echo "Pointing ${MAJOR_TAG} at ${TARGET} (${RELEASE_TAG})"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Lightweight, matching what consumers already resolve for @v1.
+          git tag -f "${MAJOR_TAG}" "${TARGET}"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/tags/${MAJOR_TAG}"
+
+          echo "### Major tag \`${MAJOR_TAG}\` -> \`${RELEASE_TAG}\`" >> "$GITHUB_STEP_SUMMARY"
