@@ -23,7 +23,7 @@ SHA-pin external GitHub Actions with a `# vX.Y.Z` comment. MIT.
 setup / usage error.
 
 **Releases are automated** — pushing to `main` runs Diatreme +
-python-semantic-release (`.github/workflows/release.yaml`), which cuts the next
+python-semantic-release (`.github/workflows/release.yml`), which cuts the next
 stable `vX.Y.Z` from conventional commits and bumps `project.version` +
 `__init__.__version__`. Never bump those by hand.
 
