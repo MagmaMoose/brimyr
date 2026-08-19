@@ -144,23 +144,38 @@ is updated in place on every push rather than stacked, so a long-running PR keep
 exactly one comment.
 
 ```yaml
+permissions:
+  contents: read
+  pull-requests: write     # ← required; the default `read` cannot comment
+
+# ...
       - uses: magmamoose/brimyr@v1
         with:
           pr_comment: 'true'
           # github_token defaults to the job token (comments as github-actions[bot])
 ```
 
-The job needs `pull-requests: write`:
+Add `token_broker_url` — plus `id-token: write` on the job — and the comment is
+authored by **Brimyr[bot]** instead of the shared `github-actions[bot]`:
 
 ```yaml
 permissions:
   contents: read
   pull-requests: write
-```
+  id-token: write          # ← required to mint the Brimyr[bot] identity
 
-The comment carries a hidden `<!-- brimyr:pr-summary -->` marker so Brimyr only
-ever edits its own comment — Chargate's summary on the same PR is left alone.
+# ...
+        with:
+          pr_comment: 'true'
+          token_broker_url: https://broker-brimyr.magmamoose.com
+```
 
 Commenting is **non-blocking**: a missing token, a 403, or a network failure is
 reported on stderr and never changes the gate verdict, the same contract the
-SonarQube step follows.
+SonarQube step follows. The broker is non-blocking too — and *silently* so: any
+problem with it costs the byline and nothing else.
+
+Both `pr_comment` and `token_broker_url` are inputs of the **composite action**;
+the reusable workflow does not forward them today. See
+[PR comment](pr-comment.md) for what the comment looks like, how the
+single-comment marker works, and the full list of broker failure messages.
