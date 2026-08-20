@@ -26,6 +26,12 @@
 - **Sample-size floor**: `min_lines` (default 20, matching SonarQube) skips the
   threshold under 20 changed executable lines. Tests asserting threshold behaviour on
   small fixtures need `min_lines=0` or they pass for the wrong reason. Never silent.
+- **Multi-rule `# nosec` is SPACE-separated**, never comma: `# nosec B603 B607`.
+  `# nosec B603,B607` is silently invalid — it suppresses nothing and chargate still
+  blocks. Verified against bandit directly.
+- **`tests/fixtures/diff_corpus/` is SHARED with chargate.** Editing a fixture breaks
+  `test_corpus_checksum_matches` deliberately: update `CORPUS.sha256` *and* copy the
+  change across. Duplicated parsers are the design (brimyr#33); this is the tripwire.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not the callers.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.
