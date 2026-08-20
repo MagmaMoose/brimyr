@@ -25,13 +25,14 @@ from brimyr.coverage.model import CoverageReport, FileCoverage
 from brimyr.coverage.patch import compute_patch_coverage
 
 pytestmark = pytest.mark.skipif(
-    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,  # nosec B607
+    # nosec B603 B607 - fixed argv, no shell; git is resolved from PATH on purpose
+    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,  # nosec B603 B607
     reason="git is not available",
 )
 
 
 def _run(args: list[str], cwd: Path) -> None:
-    subprocess.run(  # nosec B607 - fixed argv, no shell
+    subprocess.run(  # nosec B603 B607 - fixed argv, no shell
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
     )
 
@@ -46,7 +47,7 @@ def _init_repo(path: Path) -> None:
 def _commit_all(path: Path, message: str) -> str:
     _run(["add", "-A"], path)
     _run(["commit", "-q", "-m", message], path)
-    return subprocess.run(  # nosec B607 - fixed argv, no shell
+    return subprocess.run(  # nosec B603 B607 - fixed argv, no shell
         ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
     ).stdout.strip()
 
