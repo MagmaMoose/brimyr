@@ -1,0 +1,6 @@
+diff --git a/bin.dat b/bin.dat
+index 1269488..b43761b 100644
+Binary files a/bin.dat and b/bin.dat differ
+diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
