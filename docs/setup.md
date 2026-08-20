@@ -23,9 +23,14 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      # Check out FIRST — the deps install below needs a populated workspace, so
+      # the action's own checkout would be too late.
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - run: pip install -e '.[test]'          # install your test deps first
       - uses: magmamoose/brimyr@v1
         with:
+          checkout: 'false'                     # already checked out above
           threshold: '80'
           pr_comment: 'true'
           # sonar_url: https://sonar.example.com

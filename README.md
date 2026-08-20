@@ -81,11 +81,17 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      # Check out FIRST: the deps install below runs in the workspace, so the
+      # action's own checkout would be too late. `fetch-depth: 0` because patch
+      # coverage needs the merge-base.
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - uses: actions/setup-python@v6
         with: { python-version: '3.12' }
       - run: pip install -e '.[test]'          # your test deps
       - uses: magmamoose/brimyr@v1
         with:
+          checkout: 'false'                     # already checked out above
           threshold: '80'
           pr_comment: 'true'                    # one PR comment, updated in place
           # sonar_url: https://sonar.example.com
@@ -100,8 +106,10 @@ Brimyr runs the tests **on the runner**, so install your toolchain and test deps
 in a step before it — or skip the run entirely by feeding a ready-made report via
 `coverage_file`.
 
-The action checks out with `fetch-depth: 0` by default (patch coverage needs the
-merge-base). Set `checkout: 'false'` if you already checked out with full history.
+The action checks out with `fetch-depth: 0` by default, so if Brimyr is your only
+step you can drop both the checkout and `checkout: 'false'`. Any step that touches
+the workspace before it — installing test deps, as above — needs the explicit
+checkout, because the action's own would run too late.
 
 ### 2. pre-push hook
 
