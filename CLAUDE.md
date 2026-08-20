@@ -5,8 +5,7 @@ Brimyr is a **patch-coverage gate**. It auto-detects the repo's ecosystem
 a PR gates **only on the coverage of the lines the diff changed** (diff-cover
 style, default 80%); pre-existing uncovered code never blocks. Non-blocking, the
 same run drives `sonar-scanner` for the SonarQube trend, and posts one PR comment.
-One `brimyr` CLI backs three surfaces: `action.yml`, `.github/workflows/gate.yml`
-and `.pre-commit-hooks.yaml`.
+One `brimyr` CLI backs two surfaces: `action.yml` and `.pre-commit-hooks.yaml`.
 
 @.claude/QUICK_START.md
 @.claude/ARCHITECTURE_MAP.md

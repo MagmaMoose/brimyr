@@ -8,7 +8,6 @@
     "src/brimyr/cli.py:cmd_local",
     "src/brimyr/cli.py:_run_flow",
     "action.yml:runs",
-    ".github/workflows/gate.yml:jobs.brimyr",
     ".pre-commit-hooks.yaml:brimyr",
     "broker/app/lambda_handler.py:handler"
   ],
@@ -251,16 +250,6 @@
         "cli"
       ]
     },
-    "surface.workflow": {
-      "path": ".github/workflows/gate.yml",
-      "purpose": "Reusable workflow (workflow_call) that checks out with enough history, sets up the toolchain, fetches the action, and runs it \u2014 the drop-in way for consumer repos.",
-      "exports": [
-        "jobs.brimyr"
-      ],
-      "depends_on": [
-        "surface.action"
-      ]
-    },
     "surface.hook": {
       "path": ".pre-commit-hooks.yaml",
       "purpose": "pre-commit hook id `brimyr` running `brimyr local` at the pre-push stage (too heavy for pre-commit: it runs the whole suite).",
@@ -279,7 +268,6 @@
         "broker-smoke.yml",
         "ci.yml",
         "coverage.yml",
-        "gate.yml",
         "major-tag.yml",
         "release.yml",
         "security.yml"

@@ -31,11 +31,10 @@ You run the tests *with instrumentation on* (`pytest --cov`, `jest --coverage`,
 separate "measure coverage" pass. Brimyr detects the ecosystem and runs the right
 command; polyglot repos produce **one coverage file per language**, merged.
 
-## Three surfaces, one CLI
+## Two surfaces, one CLI
 
 | Surface | What it is | When to use |
 | --- | --- | --- |
-| **Reusable workflow** | `.github/workflows/gate.yml` (`on: workflow_call`) | Easiest — a consumer's whole config is ~one job block. |
 | **Composite action** | `action.yml` | When you compose your own steps. |
 | **pre-push hook** | `.pre-commit-hooks.yaml` (`brimyr` hook) | Catch a shortfall locally before pushing. |
 
