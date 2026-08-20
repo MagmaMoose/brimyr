@@ -24,7 +24,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from brimyr import __version__, broker_client, sonar_dotnet
+from brimyr import __version__, broker_client, html_report, sonar_dotnet
 from brimyr import git as bgit
 from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
@@ -252,10 +252,13 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 def _collect_coverage(
     args: argparse.Namespace,
-) -> tuple[CoverageReport, bool, list[Ecosystem], dict[str, tuple[str, ...]]] | int:
+) -> tuple[CoverageReport, bool, list[Ecosystem], dict[str, tuple[str, ...]], list[str]] | int:
     """Obtain coverage either from given files (escape hatch) or by running tests.
 
-    Returns ``(report, broken, ecosystems, sonar_paths)`` or an error exit code.
+    Returns ``(report, broken, ecosystems, sonar_paths, coverage_paths)`` or an error
+    exit code. ``coverage_paths`` is every report file that was actually read, which the
+    HTML renderer needs — ``sonar_paths`` is keyed by Sonar property and so drops any
+    ecosystem without one.
     """
     # Escape hatch: ingest pre-made coverage file(s); never run tests.
     if args.coverage_file:
@@ -264,7 +267,7 @@ def _collect_coverage(
             reports = [ingest_file(path, fmt) for path, fmt in specs]
         except (ValueError, IngestError) as exc:
             return _fail(str(exc))
-        return merge_reports(reports), False, [], {}
+        return merge_reports(reports), False, [], {}, [str(path) for path, _ in specs]
 
     # Otherwise detect (or honour forced) ecosystems and run their tests.
     if args.ecosystem:
@@ -285,7 +288,9 @@ def _collect_coverage(
 
     result: RunResult = run_tests(ecosystems, args.repo, command=args.test_command or None)
     sonar_paths: dict[str, tuple[str, ...]] = {}
+    coverage_paths: list[str] = []
     for outcome in result.outcomes:
+        coverage_paths.extend(str(path) for path in outcome.coverage_paths)
         prop = outcome.ecosystem.sonar_property
         if prop and outcome.coverage_paths:
             # EVERY report, not one. sonar.*.reportPaths is a comma-separated list, and a
@@ -297,7 +302,7 @@ def _collect_coverage(
             )
         if outcome.error:
             _eprint(f"brimyr: {outcome.ecosystem.label}: {outcome.error}")
-    return result.report, result.broken, ecosystems, sonar_paths
+    return result.report, result.broken, ecosystems, sonar_paths, coverage_paths
 
 
 def _sonar_config(
@@ -381,6 +386,28 @@ def _maybe_run_sonar(
     result = sonar_mod.run_scanner(_sonar_config(args, sonar_paths), args.repo)
     if not result.ok:
         _warn(f"SonarQube: {result.message}")
+    return result.message
+
+
+def _maybe_render_html(args: argparse.Namespace, coverage_paths: list[str]) -> str | None:
+    """Render the coverage reports to a browsable HTML artifact. Never blocks.
+
+    Off unless asked for: it costs a ReportGenerator (and therefore .NET) install, which
+    is free on a GitHub-hosted runner and a `setup-dotnet` line anywhere else — not a
+    price to charge a Python repo that never asked.
+    """
+    target = getattr(args, "html_report", "")
+    if not target:
+        return None
+    result = html_report.render(
+        coverage_paths,
+        target,
+        args.repo,
+        title=os.environ.get("GITHUB_REPOSITORY", "") or "coverage",
+        source_dirs=(args.repo,),
+    )
+    if not result.ok:
+        _warn(f"HTML coverage report: {result.message}")
     return result.message
 
 
@@ -503,7 +530,8 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     collected = _collect_coverage(args)
     if isinstance(collected, int):
         return collected
-    report, broken, ecosystems, sonar_paths = collected
+    report, broken, ecosystems, sonar_paths, coverage_paths = collected
+    html_message = _maybe_render_html(args, coverage_paths)
 
     # One policy for both numbers. Total coverage has to honour the same exclude globs
     # as the patch gate, or a PR comment shows two figures disagreeing by twenty points
@@ -542,6 +570,8 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     # The .NET scanner analyses the whole tree; a second plain `sonar-scanner` run
     # against the same projectKey would overwrite what it just uploaded.
     sonar_message = None if (broken or wrapped) else _maybe_run_sonar(args, sonar_paths, ecosystems)
+    if html_message:
+        _eprint(f"brimyr: html report: {html_message}")
 
     if args.json_out:
         Path(args.json_out).write_text(
@@ -603,6 +633,15 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
             "Do not gate a diff with fewer than N changed executable lines — the "
             f"percentage is too coarse to mean anything (default: {DEFAULT_MIN_LINES}, "
             "matching SonarQube). 0 gates every diff."
+        ),
+    )
+    parser.add_argument(
+        "--html-report",
+        metavar="DIR",
+        default="",
+        help=(
+            "Render the coverage reports to a browsable HTML report in DIR "
+            "(requires ReportGenerator). Failure-isolated: never affects the gate."
         ),
     )
     parser.add_argument(
