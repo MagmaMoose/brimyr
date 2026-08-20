@@ -384,7 +384,11 @@ runs:
         brimyr "${args[@]}"
 
     - name: Upload HTML coverage report
-      if: inputs.html_report == 'true' && steps.brimyr.outputs.html_dir != ''
+      # always(): a failing gate (exit 1) would otherwise skip every later step, and the
+      # HTML report is MOST useful exactly when coverage fell short — that is when someone
+      # wants to browse it to find what is uncovered. Same reason the JSON artifact below
+      # carries it.
+      if: ${{ always() && inputs.html_report == 'true' && steps.brimyr.outputs.html_dir != '' }}
       continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
