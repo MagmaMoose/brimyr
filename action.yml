@@ -239,8 +239,19 @@ runs:
           exit 1
         fi
         unzip -q "$tmp/$zip" -d "$HOME/.sonar"
-        echo "$HOME/.sonar/sonar-scanner-${SCANNER_VERSION}-linux-x64/bin" >> "$GITHUB_PATH"
-        echo "installed sonar-scanner ${SCANNER_VERSION}"
+
+        # Locate the bin/ directory by looking at what was actually extracted, rather
+        # than interpolating SCANNER_VERSION into the path. The `case` guard above already
+        # rejects anything but digits and dots, but this removes the consumer-controlled
+        # value from the $GITHUB_PATH line altogether — no taint flow left to reason about,
+        # and it no longer assumes the archive's directory naming.
+        bindir="$(find "$HOME/.sonar" -maxdepth 2 -type d -name bin -print -quit)"
+        if [ -z "$bindir" ]; then
+          echo "::warning::sonar-scanner archive had no bin/ directory; skipping Sonar"
+          exit 0
+        fi
+        printf '%s\n' "$bindir" >> "$GITHUB_PATH"
+        echo "installed sonar-scanner"
 
     - name: Brimyr gate
       id: brimyr
