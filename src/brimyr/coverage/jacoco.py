@@ -42,6 +42,18 @@ for a multi-project .NET solution. **Pure**: parses a string, touches no files.
 from __future__ import annotations
 
 from io import BytesIO
+
+# Suppressed below, with the reasoning in the code rather than only in a commit message.
+# The XXE half of the warning does not apply: ElementTree does NOT resolve external
+# entities — `<!ENTITY xxe SYSTEM "file:///etc/passwd">` raises `undefined entity` rather
+# than reading the file (measured on this runtime, not assumed), so there is no data-leak
+# path. `defusedxml` is ruled out regardless: the core is stdlib-only by design.
+#
+# Entity-expansion DoS ("billion laughs") DOES apply — ElementTree expands internal
+# entities happily. The exposure is narrow, since the file is written by the repo's own
+# test run inside the same job, but it is real when `coverage_file` points at a committed
+# file in a fork PR. It applies identically to cobertura.py, so the fix belongs in both
+# parsers and is deliberately not bolted on here.
 from xml.etree import ElementTree as ET  # nosec B405  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 
 from brimyr.coverage.model import CoverageBuilder, CoverageReport
