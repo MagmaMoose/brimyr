@@ -521,6 +521,6 @@
     "broker/app/broker.py",
     "tests/test_patch.py",
     "action.yml",
-    "docs/"
+    "README.md"
   ]
 }

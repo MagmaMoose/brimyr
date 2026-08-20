@@ -7,10 +7,14 @@
       "Read(./**/*.pem)",
       "Read(./**/*.key)",
       "Read(./**/secrets/**)",
-      "Bash(curl:*)"
+      "Read(./broker/**/terraform.tfstate*)"
     ],
     "ask": [
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(curl:*)",
+      "Bash(aws:*)",
+      "Bash(tofu apply:*)",
+      "Bash(terraform apply:*)"
     ]
   }
 }
