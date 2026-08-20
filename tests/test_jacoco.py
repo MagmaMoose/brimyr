@@ -32,14 +32,14 @@ JACOCO = """\
 
 def test_joins_package_and_sourcefile_into_a_path():
     report = parse_jacoco(JACOCO)
-    assert report.get("nl/example/isam/case/CaseService.java") is not None
+    assert report.get("nl/example/isam/case/CaseService.java") is not None  # nosec B101
 
 
 def test_covered_instructions_decide_coverage():
     service = parse_jacoco(JACOCO).get("nl/example/isam/case/CaseService.java")
-    assert service is not None
-    assert 12 in service.covered
-    assert 13 in service.uncovered
+    assert service is not None  # nosec B101
+    assert 12 in service.covered  # nosec B101
+    assert 13 in service.uncovered  # nosec B101
 
 
 def test_partially_covered_line_counts_as_covered():
@@ -49,8 +49,8 @@ def test_partially_covered_line_counts_as_covered():
     as missed would penalise every `a && b` in the diff.
     """
     service = parse_jacoco(JACOCO).get("nl/example/isam/case/CaseService.java")
-    assert service is not None
-    assert 14 in service.covered
+    assert service is not None  # nosec B101
+    assert 14 in service.covered  # nosec B101
 
 
 def test_method_line_elements_do_not_leak_into_the_report():
@@ -60,8 +60,8 @@ def test_method_line_elements_do_not_leak_into_the_report():
     `root.iter("line")` from the wrong level would invent coverage for them.
     """
     service = parse_jacoco(JACOCO).get("nl/example/isam/case/CaseService.java")
-    assert service is not None
-    assert service.executable == {12, 13, 14}
+    assert service is not None  # nosec B101
+    assert service.executable == {12, 13, 14}  # nosec B101
 
 
 def test_default_package_yields_a_bare_filename():
@@ -70,7 +70,7 @@ def test_default_package_yields_a_bare_filename():
         '<sourcefile name="Main.java"><line nr="1" mi="0" ci="1"/></sourcefile>'
         "</package></report>"
     )
-    assert report.get("Main.java") is not None
+    assert report.get("Main.java") is not None  # nosec B101
 
 
 def test_multi_module_reactor_keeps_modules_separate():
@@ -85,9 +85,9 @@ def test_multi_module_reactor_keeps_modules_separate():
     )
     a = report.get("nl/a/A.java")
     b = report.get("nl/b/B.java")
-    assert a is not None and b is not None
-    assert a.covered == {1}
-    assert b.uncovered == {1}
+    assert a is not None and b is not None  # nosec B101
+    assert a.covered == {1}  # nosec B101
+    assert b.uncovered == {1}  # nosec B101
 
 
 def test_malformed_xml_raises():
@@ -108,8 +108,8 @@ def test_missing_line_number_is_skipped():
         "</sourcefile></package></report>"
     )
     s = report.get("p/S.java")
-    assert s is not None
-    assert s.executable == {5}
+    assert s is not None  # nosec B101
+    assert s.executable == {5}  # nosec B101
 
 
 def test_non_numeric_attributes_are_skipped_not_fatal():
@@ -119,19 +119,19 @@ def test_non_numeric_attributes_are_skipped_not_fatal():
         "</sourcefile></package></report>"
     )
     s = report.get("p/S.java")
-    assert s is not None
-    assert s.executable == {8}
+    assert s is not None  # nosec B101
+    assert s.executable == {8}  # nosec B101
 
 
 class TestIsJacoco:
     def test_detects_jacoco_by_root_element(self):
-        assert is_jacoco(JACOCO)
+        assert is_jacoco(JACOCO)  # nosec B101
 
     def test_rejects_cobertura(self):
-        assert not is_jacoco('<?xml version="1.0" ?><coverage><packages/></coverage>')
+        assert not is_jacoco('<?xml version="1.0" ?><coverage><packages/></coverage>')  # nosec B101
 
     def test_rejects_non_xml(self):
-        assert not is_jacoco("TN:\nSF:a.js\nDA:1,1\nend_of_record\n")
+        assert not is_jacoco("TN:\nSF:a.js\nDA:1,1\nend_of_record\n")  # nosec B101
 
     def test_works_on_a_truncated_head(self):
         """The caller sniffs only the first few KB of a multi-megabyte report.
@@ -141,5 +141,5 @@ class TestIsJacoco:
         sized in KB and not in bytes.
         """
         head = JACOCO[:200]
-        assert "</report>" not in head
-        assert is_jacoco(head)
+        assert "</report>" not in head  # nosec B101
+        assert is_jacoco(head)  # nosec B101

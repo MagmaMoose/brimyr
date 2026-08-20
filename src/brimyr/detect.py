@@ -99,7 +99,7 @@ def _js_uses_vitest(root: Path) -> bool:
     deps = {**data.get("devDependencies", {}), **data.get("dependencies", {})}
     if "vitest" in deps:
         return True
-    # A vite.config.* that declares a `test` block is vitest too.
+    # Also detect 'vitest' in the test script string.
     scripts = data.get("scripts")
     test_script = scripts.get("test") if isinstance(scripts, dict) else None
     return isinstance(test_script, str) and "vitest" in test_script

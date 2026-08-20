@@ -95,8 +95,8 @@ def test_locate_coverage_missing(tmp_path):
 def test_detect_java_maven(tmp_path):
     (tmp_path / "pom.xml").write_text("<project/>\n")
     found = detect_ecosystems(tmp_path)
-    assert [e.key for e in found] == ["java"]
-    assert found[0].coverage_format is CoverageFormat.JACOCO
+    assert [e.key for e in found] == ["java"]  # nosec B101
+    assert found[0].coverage_format is CoverageFormat.JACOCO  # nosec B101
 
 
 def test_gradle_alone_is_not_auto_detected(tmp_path):
@@ -106,9 +106,9 @@ def test_gradle_alone_is_not_auto_detected(tmp_path):
     broken-run rule into a red build. Gradle users pass `test_command` explicitly.
     """
     (tmp_path / "build.gradle").write_text("plugins { id 'java' }\n")
-    assert detect_ecosystems(tmp_path) == []
+    assert detect_ecosystems(tmp_path) == []  # nosec B101
     # ...but forcing it by key still works, sharing the JaCoCo parser.
-    assert ecosystem("java") is not None
+    assert ecosystem("java") is not None  # nosec B101
 
 
 def test_java_coverage_files_span_every_reactor_module(tmp_path):
@@ -118,7 +118,7 @@ def test_java_coverage_files_span_every_reactor_module(tmp_path):
         report.mkdir(parents=True)
         (report / "jacoco.xml").write_text("<report/>")
     found = locate_coverage_files(ecosystem("java"), tmp_path)
-    assert [p.parts[-5] for p in found] == ["isam3d-case", "isam3d-user"]
+    assert [p.parts[-5] for p in found] == ["isam3d-case", "isam3d-user"]  # nosec B101
 
 
 def test_vitest_repo_gets_the_vitest_command(tmp_path):
@@ -126,26 +126,26 @@ def test_vitest_repo_gets_the_vitest_command(tmp_path):
     (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
     (tmp_path / "vitest.config.ts").write_text("export default {}\n")
     found = detect_ecosystems(tmp_path)
-    assert [e.key for e in found] == ["javascript"]
-    assert "vitest" in found[0].command_str()
-    assert "jest" not in found[0].command_str()
+    assert [e.key for e in found] == ["javascript"]  # nosec B101
+    assert "vitest" in found[0].command_str()  # nosec B101
+    assert "jest" not in found[0].command_str()  # nosec B101
     # Same output file and format — only the binary differs.
-    assert found[0].coverage_format is CoverageFormat.LCOV
-    assert found[0].coverage_paths == ("coverage/lcov.info",)
+    assert found[0].coverage_format is CoverageFormat.LCOV  # nosec B101
+    assert found[0].coverage_paths == ("coverage/lcov.info",)  # nosec B101
 
 
 def test_vitest_detected_from_dev_dependencies(tmp_path):
     (tmp_path / "package.json").write_text(
         '{"scripts": {"test": "run-tests"}, "devDependencies": {"vitest": "^2"}}'
     )
-    assert "vitest" in detect_ecosystems(tmp_path)[0].command_str()
+    assert "vitest" in detect_ecosystems(tmp_path)[0].command_str()  # nosec B101
 
 
 def test_jest_repo_is_untouched(tmp_path):
     (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
     found = detect_ecosystems(tmp_path)
-    assert "jest" in found[0].command_str()
-    assert "vitest" not in found[0].command_str()
+    assert "jest" in found[0].command_str()  # nosec B101
+    assert "vitest" not in found[0].command_str()  # nosec B101
 
 
 def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
@@ -154,4 +154,4 @@ def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
     (tmp_path / "package.json").write_text('{"devDependencies": {"vitest": "^2"}}')
     (tmp_path / "vitest.config.ts").write_text("export default {}\n")
     found = detect_ecosystems(tmp_path)
-    assert [e.key for e in found] == ["python", "javascript"]
+    assert [e.key for e in found] == ["python", "javascript"]  # nosec B101

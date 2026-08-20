@@ -42,7 +42,7 @@ for a multi-project .NET solution. **Pure**: parses a string, touches no files.
 from __future__ import annotations
 
 from io import BytesIO
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # nosec B405  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 
 from brimyr.coverage.model import CoverageBuilder, CoverageReport
 
@@ -64,7 +64,7 @@ def is_jacoco(text: str) -> bool:
         # Pull only the root element out; the rest of a multi-module report can be
         # megabytes and none of it is needed to answer this.
         stream = BytesIO(text.encode("utf-8", errors="replace"))
-        for _event, element in ET.iterparse(stream, events=("start",)):
+        for _event, element in ET.iterparse(stream, events=("start",)):  # nosec B314
             return element.tag == "report"
     except ET.ParseError:
         return False
@@ -74,7 +74,7 @@ def is_jacoco(text: str) -> bool:
 def parse_jacoco(text: str) -> CoverageReport:
     """Parse JaCoCo XML text into a :class:`CoverageReport`."""
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(text)  # nosec B314
     except ET.ParseError as exc:
         raise JacocoError(f"invalid JaCoCo XML: {exc}") from exc
 

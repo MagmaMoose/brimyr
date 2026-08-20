@@ -271,7 +271,7 @@ def test_jacoco_xml_is_not_read_as_cobertura(java_repo, tmp_path):
     cov = tmp_path / "jacoco.xml"
     _jacoco(cov, {4: 0, 5: 0})  # neither changed line covered -> 0%
     code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
-    assert code == 1
+    assert code == 1  # nosec B101
 
 
 def test_jacoco_pass(java_repo, tmp_path):
@@ -279,7 +279,7 @@ def test_jacoco_pass(java_repo, tmp_path):
     cov = tmp_path / "jacoco.xml"
     _jacoco(cov, {4: 1, 5: 1})
     code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
-    assert code == 0
+    assert code == 0  # nosec B101
 
 
 def test_explicit_jacoco_format_suffix_wins(java_repo, tmp_path):
@@ -290,7 +290,7 @@ def test_explicit_jacoco_format_suffix_wins(java_repo, tmp_path):
     code = main(
         ["coverage", "--coverage-file", f"{cov}:jacoco", "--base", base, "--repo", str(repo_dir)]
     )
-    assert code == 1
+    assert code == 1  # nosec B101
 
 
 def test_cobertura_xml_still_sniffs_as_cobertura(repo, tmp_path):
@@ -299,4 +299,4 @@ def test_cobertura_xml_still_sniffs_as_cobertura(repo, tmp_path):
     cov = tmp_path / "coverage.xml"
     _cobertura(cov, {4: 1, 5: 1})
     code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
-    assert code == 0
+    assert code == 0  # nosec B101
