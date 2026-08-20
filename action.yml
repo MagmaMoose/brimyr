@@ -140,7 +140,12 @@ inputs:
     default: 'brimyr-coverage'
 
   python_version:
-    description: 'Python version used to run the brimyr CLI.'
+    description: >-
+      Python version used to run the brimyr CLI. NOTE: `actions/setup-python` changes the
+      job's Python for every step AFTER this action, which is a side effect a gate should
+      not have. Brimyr itself is installed into its own venv and invoked by absolute
+      path, so it does not depend on this — leave it alone unless the runner's default
+      Python is older than 3.11.'
     required: false
     default: '3.12'
 
@@ -185,9 +190,30 @@ runs:
       with:
         python-version: ${{ inputs.python_version }}
 
+    # Into a DEDICATED venv, not the job's interpreter. `pip install` into the ambient
+    # environment writes into whatever `site-packages` the consumer's job is using — the
+    # same one their own test dependencies live in. Brimyr declares no dependencies, so
+    # the blast radius today is small, but "small" is not "none": pip still resolves,
+    # still writes a console script onto PATH, and a future dependency here would become
+    # a resolver conflict in someone else's test run. A composite action has no business
+    # mutating its caller's interpreter.
+    #
+    # `python -m venv` and not `uv tool install`: uv would mean every consumer of this
+    # action also pulls setup-uv, and adding an external action to the critical path of a
+    # gate is a worse trade than four lines of stdlib.
     - name: Install brimyr
+      id: install
       shell: bash
-      run: python -m pip install --disable-pip-version-check --quiet "$GITHUB_ACTION_PATH"
+      run: |
+        set -euo pipefail
+        venv="${RUNNER_TEMP:-/tmp}/brimyr-venv"
+        python -m venv "$venv"
+        "$venv/bin/python" -m pip install --disable-pip-version-check --quiet \
+          "$GITHUB_ACTION_PATH"
+        # Absolute path, exported for the gate step. Deliberately NOT added to
+        # $GITHUB_PATH: that would put this venv's bin ahead of the consumer's tools for
+        # every later step in their job, which is the side effect being removed.
+        echo "bin=$venv/bin/brimyr" >> "$GITHUB_OUTPUT"
 
     # Without this the Sonar leg is a silent no-op: nothing installs a scanner, so every
     # run reported "skipped (sonar-scanner not found on PATH)" while the build stayed
@@ -267,6 +293,7 @@ runs:
       id: brimyr
       shell: bash
       env:
+        BRIMYR_BIN: ${{ steps.install.outputs.bin }}
         GITHUB_EVENT_NAME: ${{ github.event_name }}
         SONAR_TOKEN: ${{ inputs.sonar_token }}
         BASE_REF_IN: ${{ inputs.base_ref }}
@@ -338,7 +365,7 @@ runs:
           [ -n "$TOKEN_BROKER_URL_IN" ] && args+=(--token-broker-url "$TOKEN_BROKER_URL_IN")
         fi
 
-        brimyr "${args[@]}"
+        "$BRIMYR_BIN" "${args[@]}"
 
     - name: Upload coverage JSON artifact
       if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.json_path != '' && hashFiles(steps.brimyr.outputs.json_path) != '' }}
