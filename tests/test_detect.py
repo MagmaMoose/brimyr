@@ -7,6 +7,7 @@ from brimyr.detect import (
     detect_ecosystems,
     ecosystem,
     locate_coverage_file,
+    locate_coverage_files,
 )
 
 
@@ -89,3 +90,68 @@ def test_locate_coverage_glob(tmp_path):
 
 def test_locate_coverage_missing(tmp_path):
     assert locate_coverage_file(ecosystem("python"), tmp_path) is None
+
+
+def test_detect_java_maven(tmp_path):
+    (tmp_path / "pom.xml").write_text("<project/>\n")
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["java"]
+    assert found[0].coverage_format is CoverageFormat.JACOCO
+
+
+def test_gradle_alone_is_not_auto_detected(tmp_path):
+    """`build.gradle` is a marker, but the built-in command is `mvn`.
+
+    Auto-detecting here would run `mvn` in a Gradle repo, fail the run, and trip the
+    broken-run rule into a red build. Gradle users pass `test_command` explicitly.
+    """
+    (tmp_path / "build.gradle").write_text("plugins { id 'java' }\n")
+    assert detect_ecosystems(tmp_path) == []
+    # ...but forcing it by key still works, sharing the JaCoCo parser.
+    assert ecosystem("java") is not None
+
+
+def test_java_coverage_files_span_every_reactor_module(tmp_path):
+    """A multi-module build writes one report per module; all of them must be found."""
+    for module in ("isam3d-case", "isam3d-user"):
+        report = tmp_path / module / "target" / "site" / "jacoco"
+        report.mkdir(parents=True)
+        (report / "jacoco.xml").write_text("<report/>")
+    found = locate_coverage_files(ecosystem("java"), tmp_path)
+    assert [p.parts[-5] for p in found] == ["isam3d-case", "isam3d-user"]
+
+
+def test_vitest_repo_gets_the_vitest_command(tmp_path):
+    """A vitest config is already a test signal — it must not be handed to jest."""
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
+    (tmp_path / "vitest.config.ts").write_text("export default {}\n")
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["javascript"]
+    assert "vitest" in found[0].command_str()
+    assert "jest" not in found[0].command_str()
+    # Same output file and format — only the binary differs.
+    assert found[0].coverage_format is CoverageFormat.LCOV
+    assert found[0].coverage_paths == ("coverage/lcov.info",)
+
+
+def test_vitest_detected_from_dev_dependencies(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "run-tests"}, "devDependencies": {"vitest": "^2"}}'
+    )
+    assert "vitest" in detect_ecosystems(tmp_path)[0].command_str()
+
+
+def test_jest_repo_is_untouched(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}')
+    found = detect_ecosystems(tmp_path)
+    assert "jest" in found[0].command_str()
+    assert "vitest" not in found[0].command_str()
+
+
+def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
+    """One JS run, not two — the variant replaces the entry, never adds a row."""
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "package.json").write_text('{"devDependencies": {"vitest": "^2"}}')
+    (tmp_path / "vitest.config.ts").write_text("export default {}\n")
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["python", "javascript"]

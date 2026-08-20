@@ -72,7 +72,7 @@ inputs:
 
   # ── Test run / coverage ──────────────────────────────────────────────────
   ecosystem:
-    description: 'Force ecosystem(s): comma-separated python|javascript|dotnet (default: auto-detect).'
+    description: 'Force ecosystem(s): comma-separated python|javascript|dotnet|java (default: auto-detect).'
     required: false
     default: ''
   test_command:

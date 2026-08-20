@@ -222,3 +222,81 @@ def test_json_out_written(repo, tmp_path):
 def test_version(capsys):
     assert main(["version"]) == 0
     assert capsys.readouterr().out.strip()
+
+
+@pytest.fixture
+def java_repo(tmp_path):
+    """A git repo whose head commit adds two lines to a Java source file.
+
+    The path carries the Maven source-root prefix (`backend/src/main/java/...`) that a
+    JaCoCo report does NOT — JaCoCo names files as `<package>/<sourcefile>`. Suffix
+    matching in `coverage.patch` is what reconciles the two, so the fixture keeps the
+    prefix rather than flattening it into something artificially easy to match.
+    """
+    src = tmp_path / "backend" / "src" / "main" / "java" / "nl" / "example"
+    src.mkdir(parents=True)
+    target = src / "Service.java"
+    _git(tmp_path, "init", "-q")
+    target.write_text("1\n2\n3\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    base = _rev(tmp_path)
+    target.write_text("1\n2\n3\n4\n5\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "head")
+    return tmp_path, base
+
+
+def _jacoco(path, lines):
+    body = "".join(f'<line nr="{n}" mi="{1 - c}" ci="{c}"/>' for n, c in lines.items())
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">\n'
+        '<report name="m"><package name="nl/example">'
+        f'<sourcefile name="Service.java">{body}</sourcefile>'
+        "</package></report>"
+    )
+
+
+def test_jacoco_xml_is_not_read_as_cobertura(java_repo, tmp_path):
+    """The load-bearing test for Java support.
+
+    `.xml` is the extension of BOTH formats. If a JaCoCo report is parsed as Cobertura
+    it yields zero files, `Service.java` is then a file the report never mentions, its
+    changed lines leave the denominator, and the gate returns a vacuous 100% PASS over
+    code with no coverage at all. Exit 1 here is the whole point: the failure must be
+    loud.
+    """
+    repo_dir, base = java_repo
+    cov = tmp_path / "jacoco.xml"
+    _jacoco(cov, {4: 0, 5: 0})  # neither changed line covered -> 0%
+    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    assert code == 1
+
+
+def test_jacoco_pass(java_repo, tmp_path):
+    repo_dir, base = java_repo
+    cov = tmp_path / "jacoco.xml"
+    _jacoco(cov, {4: 1, 5: 1})
+    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    assert code == 0
+
+
+def test_explicit_jacoco_format_suffix_wins(java_repo, tmp_path):
+    """`path:jacoco` must work even when the file is named something unsniffable."""
+    repo_dir, base = java_repo
+    cov = tmp_path / "merged.report"
+    _jacoco(cov, {4: 1, 5: 0})  # 50% < 80%
+    code = main(
+        ["coverage", "--coverage-file", f"{cov}:jacoco", "--base", base, "--repo", str(repo_dir)]
+    )
+    assert code == 1
+
+
+def test_cobertura_xml_still_sniffs_as_cobertura(repo, tmp_path):
+    """The sniff must not regress the format every existing user is on."""
+    repo_dir, base = repo
+    cov = tmp_path / "coverage.xml"
+    _cobertura(cov, {4: 1, 5: 1})
+    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    assert code == 0

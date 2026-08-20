@@ -47,7 +47,7 @@ Key flags beyond the shared options:
 | --- | --- | --- |
 | `--mode` | `auto` | `auto` (from `GITHUB_EVENT_NAME`), `pr` (gate), or `baseline` (no gate). |
 | `--coverage-file` | — | Escape hatch: ingest a pre-made report instead of running tests. Repeatable. |
-| `--ecosystem` | — | Force `python`\|`javascript`\|`dotnet` instead of auto-detect. Repeatable. |
+| `--ecosystem` | — | Force `python`\|`javascript`\|`dotnet`\|`java` instead of auto-detect. Repeatable. |
 | `--test-command` | — | Override the detected test command (a shell command string). |
 | `--sonar-url` | — | SonarQube host URL (enables the non-blocking scanner run). |
 | `--sonar-token-env` | `SONAR_TOKEN` | Env var holding the Sonar token. |

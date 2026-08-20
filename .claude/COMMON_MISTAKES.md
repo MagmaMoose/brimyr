@@ -11,6 +11,9 @@
 - **Never hand-bump the version.** python-semantic-release writes both
   `pyproject.toml` and `src/brimyr/__init__.py`. It does not re-lock, so
   `uv.lock` lags a release — any `uv run` fixes it; commit that diff.
+- **`.xml` is not a format.** Cobertura and JaCoCo share it; parsing JaCoCo as
+  Cobertura yields an *empty* report → vacuous 100% over untested code.
+  `cli._sniff_xml_format` picks by root element; never re-add `.xml` to `_EXT_FORMAT`.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not the callers.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.

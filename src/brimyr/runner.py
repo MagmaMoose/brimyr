@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from brimyr.coverage.cobertura import CoberturaError, parse_cobertura
+from brimyr.coverage.jacoco import parse_jacoco
 from brimyr.coverage.lcov import parse_lcov
 from brimyr.coverage.model import CoverageReport, merge_reports
 from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_files
@@ -44,6 +45,8 @@ def parse_coverage_text(text: str, fmt: CoverageFormat) -> CoverageReport:
         return parse_lcov(text)
     if fmt is CoverageFormat.COBERTURA:
         return parse_cobertura(text)
+    if fmt is CoverageFormat.JACOCO:
+        return parse_jacoco(text)
     raise IngestError(f"unsupported coverage format: {fmt}")
 
 
