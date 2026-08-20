@@ -277,7 +277,8 @@ def _canonical_buckets(report: CoverageReport) -> list[tuple[list[str], dict[int
 
 def _same_file(a: str, b: str) -> bool:
     """True when two coverage paths denote the same file, one being rooted deeper."""
-    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return a == b or ("/" in short and long_.endswith("/" + short))
 
 
 def compute_total_coverage(
