@@ -209,12 +209,12 @@ jobs:
           # first publish into a prefix hits exactly that — and a 403 read as "absent"
           # would walk straight into the overwrite this refuses to do, so anything that is
           # not a clean 404 stops the run.
+          # The publish role can do this — verified against the live policy, which grants
+          # s3:GetObject + s3:GetObjectAttributes on broker/* and s3:ListBucket on the
+          # bucket, alongside s3:PutObject. A publish-ONLY role could not, and this guard
+          # would then fail closed on an AccessDenied rather than silently overwriting,
+          # which is the right way round but worth knowing before trimming the policy.
           err="$(mktemp)"
-          if existing="$(# The publish role can do this — verified against the live policy, which grants
-          if existing="$(# s3:GetObject + s3:GetObjectAttributes on broker/* and s3:ListBucket on the
-          if existing="$(# bucket, alongside s3:PutObject. A publish-ONLY role could not, and this guard
-          if existing="$(# would then fail closed on an AccessDenied rather than silently overwriting —
-          if existing="$(# which is the right way round, but is worth knowing before trimming the policy.
           if existing="$(aws s3api head-object --bucket "${BUCKET}" --key "${key}" \
                           --checksum-mode ENABLED 2>"${err}")"; then
             # ChecksumSHA256 is base64 and is only stored when the object was PUT with
