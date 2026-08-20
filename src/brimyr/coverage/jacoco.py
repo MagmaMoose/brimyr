@@ -52,9 +52,7 @@ for a multi-project .NET solution. **Pure**: parses a string, touches no files.
 from __future__ import annotations
 
 from io import BytesIO
-from xml.etree import (
-    ElementTree as ET,  # nosec B405  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
-)
+from xml.etree import ElementTree as ET  # nosec B405  # nosemgrep
 
 from brimyr.coverage.model import CoverageBuilder, CoverageReport
 
