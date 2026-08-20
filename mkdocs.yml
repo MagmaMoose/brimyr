@@ -39,6 +39,9 @@ nav:
   - Java / JVM: java.md
   - PR comment: pr-comment.md
   - HTML report: html-report.md
+  - SonarQube: sonarqube.md
+  - Troubleshooting: troubleshooting.md
+  - Action reference: action.md
   - CLI reference: cli.md
 
 markdown_extensions:

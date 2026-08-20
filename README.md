@@ -277,6 +277,20 @@ setup error.
 
 `mode: auto` (default) picks this from the event; force with `mode: pr|baseline`.
 
+## Documentation
+
+Full docs at [`./docs`](docs/index.md), built with MkDocs.
+
+| Page | What's in it |
+| --- | --- |
+| [Setup & usage](docs/setup.md) | Wiring the action, the pre-push hook, ingesting a pre-made report |
+| [Action reference](docs/action.md) | Every input and output, with real defaults |
+| [CLI reference](docs/cli.md) | Every command and flag |
+| [Patch coverage](docs/patch-coverage.md) | What counts, what doesn't, and why |
+| [SonarQube](docs/sonarqube.md) | The Sonar leg, including the .NET wrap |
+| [Troubleshooting](docs/troubleshooting.md) | Symptom, cause, fix |
+| [Architecture](docs/architecture.md) | Pure core, side-effecting edges |
+
 ## Conventions
 
 Python (uv + Ruff + pytest, type-hinted, stdlib-only core). External actions are

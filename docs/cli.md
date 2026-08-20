@@ -1,5 +1,7 @@
 # CLI reference
 
+<!-- sources: src/brimyr/cli.py, src/brimyr/gate.py -->
+
 All three GitHub surfaces drive the same `brimyr` CLI. Exit codes: `0` pass · `1`
 patch coverage below threshold · `2` broken test run / setup / usage error.
 
@@ -25,9 +27,11 @@ brimyr coverage --coverage-file coverage.xml --base "$BASE" \
 | `--head` | `HEAD` | Head ref/SHA. |
 | `--repo` | `.` | Path to the git repository. |
 | `--threshold` | `80` | Patch-coverage % that blocks below it. |
-| `--strip-prefix` | — | Path prefix to strip from coverage paths before matching (repeatable). |
+| `--strip-prefix` | none | Path prefix to strip from coverage paths before matching (repeatable). |
+| `--min-lines` | `20` | Skip the threshold when the diff has fewer changed executable lines than this. `0` gates every diff. |
+| `--exclude` | none | Glob whose matching changed files leave the denominator entirely (repeatable). `*` crosses `/`. |
 | `--no-merge-base` | off | Diff `base..head` directly instead of `merge-base(base, head)..head`. |
-| `--json-out` | — | Write the patch-coverage summary as JSON. |
+| `--json-out` | none | Write the patch-coverage summary as JSON. |
 | `--no-gate` | off | Always exit `0` (report only). |
 | `--quiet` | off | Suppress the human summary. |
 
@@ -46,14 +50,15 @@ Key flags beyond the shared options:
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--mode` | `auto` | `auto` (from `GITHUB_EVENT_NAME`), `pr` (gate), or `baseline` (no gate). |
-| `--coverage-file` | — | Escape hatch: ingest a pre-made report instead of running tests. Repeatable. |
-| `--ecosystem` | — | Force `python`\|`javascript`\|`dotnet`\|`java` instead of auto-detect. Repeatable. |
-| `--test-command` | — | Override the detected test command (a shell command string). |
-| `--sonar-url` | — | SonarQube host URL (enables the non-blocking scanner run). |
+| `--coverage-file` | none | Escape hatch: ingest a pre-made report instead of running tests. Repeatable. |
+| `--ecosystem` | none | Force `python`\|`javascript`\|`dotnet`\|`java` instead of auto-detect. Repeatable. |
+| `--test-command` | none | Override the detected test command (a shell command string). |
+| `--sonar-url` | none | SonarQube host URL (enables the non-blocking scanner run). |
 | `--sonar-token-env` | `SONAR_TOKEN` | Env var holding the Sonar token. |
-| `--sonar-project-key` / `--sonar-organization` | — | Sonar targeting. |
+| `--sonar-project-key` / `--sonar-organization` | none | Sonar targeting. |
 | `--sonar-sources` | `.` | `sonar.sources` value. |
-| `--sonar-arg` | — | Extra raw `sonar-scanner` arg, e.g. `-Dsonar.foo=bar` (repeatable). |
+| `--sonar-arg` | none | Extra raw `sonar-scanner` arg, e.g. `-Dsonar.foo=bar` (repeatable). |
+| `--html-report` | none | Directory for a browsable HTML coverage report. Needs ReportGenerator; never affects the gate. |
 
 ### PR comment flags
 
@@ -67,7 +72,7 @@ can change the exit code. See [PR comment](pr-comment.md) for the full behaviour
 | `--pr-number` | from the event | PR number (read from `$GITHUB_EVENT_PATH` otherwise). |
 | `--repo-slug` | `$GITHUB_REPOSITORY` | `owner/repo` being commented on. |
 | `--github-token-env` | `GITHUB_TOKEN` | Env var holding the comment token; needs `pull-requests: write`. |
-| `--token-broker-url` | — | Broker base URL. Authors as `Brimyr[bot]`; falls back **silently** to the token above on any failure. Needs `id-token: write`. |
+| `--token-broker-url` | none | Broker base URL. Authors as `Brimyr[bot]`; falls back **silently** to the token above on any failure. Needs `id-token: write`. |
 | `--github-api-url` | `$GITHUB_API_URL`, else `api.github.com` | GitHub API base (GitHub Enterprise). |
 
 ## `brimyr local`

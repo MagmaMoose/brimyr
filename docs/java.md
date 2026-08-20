@@ -1,15 +1,17 @@
 # Java / JVM
 
+<!-- sources: src/brimyr/detect.py, src/brimyr/coverage/jacoco.py -->
+
 Brimyr detects a Maven repo from `pom.xml`, runs
 
-```
+```bash
 mvn -B org.jacoco:jacoco-maven-plugin:prepare-agent test org.jacoco:jacoco-maven-plugin:report
 ```
 
 and reads every `**/target/site/jacoco/jacoco.xml` it produced.
 
 The plugin goals are invoked **by coordinate**, so this works on a `pom.xml` that has no
-JaCoCo plugin configured at all — nothing has to be added to the build to start gating.
+JaCoCo plugin configured at all, nothing has to be added to the build to start gating.
 If your `pom.xml` already binds `prepare-agent` and `report` to the build lifecycle, a
 plain `mvn -B verify` is enough and you can say so:
 
@@ -35,7 +37,7 @@ Brimyr tells the two apart by the **root element** (`<report>` vs `<coverage>`),
 file name, so `coverage_file: target/site/jacoco/jacoco.xml` just works.
 
 !!! danger "Why the extension is not enough"
-    Parsing a JaCoCo file as Cobertura does not fail — it finds no `<class filename=…>`,
+    Parsing a JaCoCo file as Cobertura does not fail. It finds no `<class filename=…>`,
     returns an **empty report**, and every changed Java file is then a file the report never
     mentions. Those files leave the denominator, and the gate gladly reports **100% over
     completely untested code**. If a tool ever hands you a coverage number you cannot
@@ -51,7 +53,7 @@ You can always be explicit:
 ### Partially covered lines count as covered
 
 A line with `ci>0` *and* `mi>0` is usually a short-circuited boolean. JaCoCo's own LINE
-counter calls it covered and so does diff-cover, so Brimyr does too — otherwise every
+counter calls it covered and so does diff-cover, so Brimyr does too, otherwise every
 `a && b` in a pull request would count against you.
 
 ## Multi-module reactors
@@ -69,13 +71,12 @@ reactor build reports a suspiciously round 100%, count the reports:
 find . -path '*/target/site/jacoco/jacoco.xml' | wc -l   # expect one per module with tests
 ```
 
-Aggregating into a single report first (the `report-aggregate` goal) also works — point
+Aggregating into a single report first (the `report-aggregate` goal) also works, point
 `coverage_file` at it and Brimyr will not run any tests.
 
 ## Source paths
 
-JaCoCo names files as `<package>/<sourcefile>` — `nl/example/isam/case/CaseService.java` —
-which is **source-root-relative** and so is missing the `backend/src/main/java/` prefix that
+JaCoCo names files as `<package>/<sourcefile>`, `nl/example/isam/case/CaseService.java`, which is **source-root-relative** and so is missing the `backend/src/main/java/` prefix that
 `git diff` reports. Brimyr reconciles that by suffix matching; there is nothing to
 configure.
 
@@ -83,7 +84,7 @@ configure.
 
 `build.gradle` and `build.gradle.kts` are recognised as Java markers but are **not**
 auto-detected, because the built-in command is `mvn` and running it in a Gradle repo would
-fail the run and turn the build red. The JaCoCo parser is shared — only the invocation
+fail the run and turn the build red. The JaCoCo parser is shared, only the invocation
 differs, so name the command:
 
 ```yaml
@@ -99,8 +100,7 @@ Gradle's `jacocoTestReport` task writes HTML by default; make sure XML is on
 ## Excluding generated code
 
 The JVM equivalent of the `.NET` problem: generated sources, MapStruct/Lombok output, JAXB
-and OpenAPI stubs. `exclude` drops matching **changed files** from the denominator entirely
-— they are not counted as covered, they simply do not count:
+and OpenAPI stubs. `exclude` drops matching **changed files** from the denominator entirely. They are not counted as covered, they simply do not count:
 
 ```yaml
         with:
@@ -147,7 +147,7 @@ what you actually saw.
 ## SonarQube
 
 `sonar.coverage.jacoco.xmlReportPaths` is set from the reports Brimyr found, so the same
-run that gates the pull request can also feed the SonarQube trend — non-blocking, as
+run that gates the pull request can also feed the SonarQube trend, non-blocking, as
 always.
 
 !!! warning "Java needs `sonar.java.binaries`"
@@ -163,6 +163,6 @@ always.
     ```
 
     Sonar also documents that the CLI scanner should not be used for Maven or Gradle
-    projects at all — `mvn sonar:sonar` is the supported path and will give a better
+    projects at all, `mvn sonar:sonar` is the supported path and will give a better
     analysis. Brimyr's patch-coverage gate is unaffected either way: it reads the JaCoCo
     reports directly and never talks to SonarQube.
