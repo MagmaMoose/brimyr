@@ -84,6 +84,16 @@ def render_summary(
     elif not patch.has_measurable:
         lines.append("✅ No changed executable lines to cover — vacuous pass.")
         lines.append("")
+    elif decision.below_min_lines:
+        # Stated, not silent. SonarQube applies the same rule and says nothing, which is
+        # how a team ends up believing small PRs are gated when they are not.
+        lines.append(
+            f"⚪ Only {patch.total_lines} changed executable line(s) — below the "
+            f"{decision.min_lines}-line minimum, so the {_fmt_pct(decision.threshold)} "
+            f"threshold was **not applied** (patch coverage was "
+            f"{_fmt_pct(patch.percent)}). Set `min_lines: '0'` to gate every diff."
+        )
+        lines.append("")
     elif decision.failed:
         lines.append(
             f"❌ **Patch coverage {_fmt_pct(patch.percent)} is below the "

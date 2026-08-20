@@ -25,6 +25,16 @@ inputs:
     description: 'Patch-coverage threshold (%) that blocks below it.'
     required: false
     default: '80'
+  min_lines:
+    description: >-
+      Do not gate a diff with fewer than N changed executable lines — below that the
+      percentage is too coarse to mean anything (1 uncovered line in 3 is 67%, which
+      fails an 80% gate while telling you nothing). SonarQube applies the same rule at
+      the same number, so matching it keeps the two verdicts from disagreeing on small
+      PRs. It IS a deliberate hole — a 19-line untested change passes — so Brimyr says
+      so in the summary rather than passing quietly. Set to '0' to gate every diff.
+    required: false
+    default: '20'
   base_ref:
     description: 'Override the base ref/SHA (default: PR base SHA from the event).'
     required: false
@@ -269,6 +279,7 @@ runs:
         # against `${{ }}` template injection.
         MODE_IN: ${{ inputs.mode }}
         THRESHOLD_IN: ${{ inputs.threshold }}
+        MIN_LINES_IN: ${{ inputs.min_lines }}
         STRIP_PREFIX_IN: ${{ inputs.strip_prefix }}
         EXCLUDE_IN: ${{ inputs.exclude }}
         ECOSYSTEM_IN: ${{ inputs.ecosystem }}
@@ -297,6 +308,7 @@ runs:
         args=(ci
           --mode "$MODE_IN"
           --threshold "$THRESHOLD_IN"
+          --min-lines "$MIN_LINES_IN"
           --repo "."
           --head "$head"
           --json-out "$json_abs")

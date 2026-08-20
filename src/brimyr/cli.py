@@ -41,6 +41,7 @@ from brimyr.detect import (
     ecosystem,
 )
 from brimyr.gate import (
+    DEFAULT_MIN_LINES,
     DEFAULT_THRESHOLD,
     EXIT_ERROR,
     GateDecision,
@@ -174,7 +175,13 @@ def _print_summary(decision: GateDecision, *, broken: bool) -> None:
                 more = " …" if len(file_result.missing_lines) > 15 else ""
                 _eprint(f"  - {file_result.path}: {shown}{more}")
     else:
-        _eprint(f"brimyr: meets threshold {decision.threshold:.1f}%")
+        if decision.below_min_lines:
+            _eprint(
+                f"brimyr: {decision.patch.total_lines} changed executable line(s) is below "
+                f"the {decision.min_lines}-line minimum — threshold not applied"
+            )
+        else:
+            _eprint(f"brimyr: meets threshold {decision.threshold:.1f}%")
 
 
 def _emit_outputs(decision: GateDecision, *, mode: Mode | None, broken: bool) -> None:
@@ -224,7 +231,9 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     patch = compute_patch_coverage(diff, report, policy)
     total = compute_total_coverage(report, policy)
     try:
-        decision = decide_gate(patch, args.threshold, gate=not args.no_gate, total=total)
+        decision = decide_gate(
+            patch, args.threshold, gate=not args.no_gate, total=total, min_lines=args.min_lines
+        )
     except ValueError as exc:
         return _fail(str(exc))
 
@@ -518,7 +527,14 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
 
     try:
         total = compute_total_coverage(report, policy)
-        decision = decide_gate(patch, args.threshold, broken=broken, gate=mode.gates, total=total)
+        decision = decide_gate(
+            patch,
+            args.threshold,
+            broken=broken,
+            gate=mode.gates,
+            total=total,
+            min_lines=args.min_lines,
+        )
     except ValueError as exc:
         return _fail(str(exc))
 
@@ -578,6 +594,16 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=DEFAULT_THRESHOLD,
         help=f"Patch-coverage threshold that blocks below it (default: {DEFAULT_THRESHOLD}).",
+    )
+    parser.add_argument(
+        "--min-lines",
+        type=int,
+        default=DEFAULT_MIN_LINES,
+        help=(
+            "Do not gate a diff with fewer than N changed executable lines — the "
+            f"percentage is too coarse to mean anything (default: {DEFAULT_MIN_LINES}, "
+            "matching SonarQube). 0 gates every diff."
+        ),
     )
     parser.add_argument(
         "--strip-prefix",

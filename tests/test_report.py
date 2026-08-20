@@ -14,6 +14,10 @@ def _decision(make_report, covered, total, threshold=80.0, **kw):
     lines = {i: (1 if i <= covered else 0) for i in range(1, total + 1)}
     diff = DiffIndex((FileDiff("a.py", "added", ((1, total),)),)) if total else DiffIndex(())
     patch = compute_patch_coverage(diff, make_report({"a.py": lines} if total else {}))
+    # These fixtures are deliberately small (10 lines) to keep them readable, which puts
+    # them under the default sample-size floor. Default to 0 here so each test exercises
+    # the rendering it was written for; the floor has its own tests.
+    kw.setdefault("min_lines", 0)
     return decide_gate(patch, threshold, **kw)
 
 
@@ -51,3 +55,11 @@ def test_sonar_message_shown(make_report):
     out = render_summary(decision, Mode.PR, sonar_message="analysis uploaded")
     assert "SonarQube" in out
     assert "analysis uploaded" in out
+
+
+def test_below_min_lines_render(make_report):
+    decision = _decision(make_report, covered=1, total=3, min_lines=20)
+    out = render_summary(decision, Mode.PR)
+    assert "⚪" in out  # nosec B101
+    assert "3 changed executable line(s)" in out  # nosec B101
+    assert "threshold was **not applied**" in out  # nosec B101

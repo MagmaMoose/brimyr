@@ -58,6 +58,33 @@ monorepo subdir, a Cobertura `<source>`) before matching.
 blocks. `--no-gate` (or baseline mode) makes the run report-only — coverage is
 still computed and shipped to SonarQube, nothing blocks.
 
+### The sample-size floor
+
+`min_lines` (default **20**) is the number of changed executable lines below which the
+threshold is **not applied**. Below that the percentage is too coarse to act on: one
+uncovered line out of three is 67%, which fails an 80% gate while telling you nothing
+useful about the change.
+
+SonarQube applies exactly this rule at exactly this number — *"the conditions on coverage
+are ignored until the number of new lines to cover is at least 20"* — so matching it stops
+a Brimyr verdict and a SonarQube verdict from disagreeing on small pull requests.
+
+!!! warning "It is a hole, deliberately"
+    A 19-line change with no tests at all passes. That is the same *shape* of hole as the
+    one that makes a project-level coverage gate unusable, just much smaller. The
+    difference is that Brimyr **says so**:
+
+    ```
+    ⚪ Only 3 changed executable line(s) — below the 20-line minimum, so the 80.0%
+    threshold was not applied (patch coverage was 33.3%).
+    ```
+
+    SonarQube applies the same exemption silently, which is how a team ends up believing
+    small PRs are gated when they are not. Set `min_lines: '0'` to gate every diff.
+
+A diff with **no** coverable lines at all is still a separate case — a vacuous pass, the
+same as a docs-only change — and is reported as such rather than as "too small".
+
 !!! tip "Local gate, Sonar trend"
     The gate is computed **locally** from the coverage file — it never depends on
     SonarQube. The `sonar-scanner` run is a separate, non-blocking step that feeds
