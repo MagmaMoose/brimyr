@@ -89,11 +89,6 @@ jobs:
 `github_token` defaults to the job's `GITHUB_TOKEN`. Point it at a different token
 only if you want a different identity and are not using the broker below.
 
-!!! note "Composite action only, today"
-    The reusable workflow (`.github/workflows/gate.yml`) does not forward
-    `pr_comment` or `token_broker_url`, and declares `pull-requests: read`. If you
-    want the comment, use the composite action as above.
-
 Outside a pull request there is nothing to comment on — on a push/baseline run the
 step is a no-op, no matter what `pr_comment` says.
 

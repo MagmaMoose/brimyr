@@ -54,17 +54,16 @@ Polyglot repos (a JS frontend + a Python backend) match more than one and produc
 > produces no coverage, that is a **tool error (build red)** — never reported as
 > "0% patch coverage" that hard-fails the gate.
 
-## Three surfaces
+## Two surfaces
 
 | Surface | What it is | When to use |
 | --- | --- | --- |
-| **Reusable workflow** | `.github/workflows/gate.yml` (`on: workflow_call`) | Easiest — a consumer's whole config is ~one job block. |
-| **Composite action** | `action.yml` | When you compose your own steps (e.g. custom toolchain setup). |
+| **Composite action** | `action.yml` | In CI. The one surface, and the one Brimyr gates itself with. |
 | **pre-push hook** | `.pre-commit-hooks.yaml` (`brimyr` hook) | Catch a coverage shortfall locally before pushing. |
 
-All three drive the same `brimyr` Python CLI.
+Both drive the same `brimyr` Python CLI.
 
-### 1. Reusable workflow (recommended)
+### 1. Composite action
 
 ```yaml
 # .github/workflows/coverage.yml
@@ -74,51 +73,45 @@ on:
   push:
     branches: [main]
 
-jobs:
-  brimyr:
-    uses: magmamoose/brimyr/.github/workflows/gate.yml@v1
-    with:
-      setup: pip install -e '.[test]'        # install your test deps first
-    secrets:
-      sonar_token: ${{ secrets.SONAR_TOKEN }} # optional
-```
-
-On PRs it runs your tests with coverage, gates on patch coverage, and (if
-`sonar_url` is set) ships to SonarQube. On push to the default branch it runs a
-non-gating baseline that still feeds the trend. Brimyr runs the tests **on the
-runner**, so install the toolchain/deps in `setup` (or feed a ready-made report
-via `coverage_file`).
-
-### 2. Composite action
-
-```yaml
-name: Coverage
-on: [pull_request]
-
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write   # for the PR comment
 
 jobs:
-  brimyr:
+  coverage:
     runs-on: ubuntu-latest
     steps:
+      # Check out FIRST: the deps install below runs in the workspace, so the
+      # action's own checkout would be too late. `fetch-depth: 0` because patch
+      # coverage needs the merge-base.
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
       - uses: actions/setup-python@v6
         with: { python-version: '3.12' }
       - run: pip install -e '.[test]'          # your test deps
       - uses: magmamoose/brimyr@v1
         with:
-          checkout: 'false'                     # you already checked out
-          threshold: '85'
+          checkout: 'false'                     # already checked out above
+          threshold: '80'
           pr_comment: 'true'                    # one PR comment, updated in place
           # sonar_url: https://sonar.example.com
           # sonar_token: ${{ secrets.SONAR_TOKEN }}
 ```
 
-The action checks out with `fetch-depth: 0` by default (patch coverage needs the
-merge-base). Set `checkout: 'false'` if you already checked out with full history.
+On PRs it runs your tests with coverage, gates on patch coverage, and (if
+`sonar_url` is set) ships to SonarQube. On push to the default branch it runs a
+non-gating baseline that still feeds the trend.
 
-### 3. pre-push hook
+Brimyr runs the tests **on the runner**, so install your toolchain and test deps
+in a step before it — or skip the run entirely by feeding a ready-made report via
+`coverage_file`.
+
+The action checks out with `fetch-depth: 0` by default, so if Brimyr is your only
+step you can drop both the checkout and `checkout: 'false'`. Any step that touches
+the workspace before it — installing test deps, as above — needs the explicit
+checkout, because the action's own would run too late.
+
+### 2. pre-push hook
 
 ```yaml
 # .pre-commit-config.yaml

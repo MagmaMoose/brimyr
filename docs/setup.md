@@ -15,20 +15,31 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write   # for the PR comment
+
 jobs:
-  brimyr:
-    uses: magmamoose/brimyr/.github/workflows/gate.yml@v1
-    with:
-      setup: pip install -e '.[test]'        # install your test deps first
-      threshold: '80'
-    secrets:
-      sonar_token: ${{ secrets.SONAR_TOKEN }} # optional
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out FIRST — the deps install below needs a populated workspace, so
+      # the action's own checkout would be too late.
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - run: pip install -e '.[test]'          # install your test deps first
+      - uses: magmamoose/brimyr@v1
+        with:
+          checkout: 'false'                     # already checked out above
+          threshold: '80'
+          pr_comment: 'true'
+          # sonar_url: https://sonar.example.com
+          # sonar_token: ${{ secrets.SONAR_TOKEN }}
 ```
 
 On PRs it runs your tests with coverage, gates on patch coverage, and (if
 `sonar_url` is set) ships to SonarQube. On push to the default branch it runs a
-non-gating baseline that still feeds the trend. Reusable workflows are consumed by
-path, independent of the Marketplace listing.
+non-gating baseline that still feeds the trend.
 
 > **Wire it on `pull_request`, not `pull_request_target`.** Brimyr runs the PR's
 > *own* test code on the runner. `pull_request_target` runs that code with the base
