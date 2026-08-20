@@ -3,17 +3,45 @@
 [![CI](https://github.com/magmamoose/brimyr/actions/workflows/ci.yml/badge.svg)](https://github.com/magmamoose/brimyr/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/magmamoose/brimyr)](LICENSE)
 
-Brimyr is a **patch-coverage gate**. On a pull request it auto-detects the repo's
-ecosystem, runs the right test command with coverage instrumentation on, and gates
-**only on the coverage of the lines the PR changed** (diff-cover style) — blocking
-below a threshold (default **80%**). Pre-existing uncovered code never blocks. The
-same run, non-blocking, drives `sonar-scanner` to ship quality + coverage to
-SonarQube for the trend.
+**Point Brimyr at any repo and it figures out the rest.** It detects the ecosystem,
+runs the test suite with coverage instrumentation on, and gates the pull request on
+the coverage of the lines that pull request changed. One composite action. No
+per-repo configuration, no server, no SaaS account, no coverage report to produce
+first.
 
-It is the coverage sibling of [Chargate](https://github.com/MagmaMoose/chargate)
-(net-new security/lint gate) and [Diatreme](https://github.com/MagmaMoose/diatreme)
-(build + release), and like Diatreme it **auto-detects the ecosystem** and runs the
-right command for it.
+```yaml
+      - uses: magmamoose/brimyr@v1     # that is the whole configuration
+```
+
+That is the part nothing else does. Patch-coverage *maths* is well-trodden —
+[diff-cover](https://github.com/Bachmann1234/diff_cover) has done it for years and
+Brimyr deliberately matches its semantics. What every other tool has in common is
+that **you bring your own coverage report**: you work out the right test command for
+each language, wire it per repo, and hand the result to a checker. Across eight
+repos in four languages, that wiring *is* the project.
+
+| | Runs your tests | Detects the ecosystem | Gates on the **diff** | No SaaS backend |
+| --- | :-: | :-: | :-: | :-: |
+| **Brimyr** | ✅ | ✅ | ✅ | ✅ |
+| diff-cover | ✗ | ✗ | ✅ | ✅ |
+| Codecov / Coveralls | ✗ | ✗ | ✅ | ✗ |
+| SonarQube Community | ✗ | ✗ | ✗ *(project-level)* | ✗ |
+| GitHub Code Quality | ✗ | ✗ | ✗ *(total + delta)* | ✗ |
+| `jacoco-report`, `cobertura-action`, … | ✗ | ✗ | ✅ | ✅ *(one language each)* |
+
+Free, MIT, and it runs entirely on your runner.
+
+## Where it sits
+
+Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
+is **security assurance**. They are twins, not competitors — Chargate gates net-new
+security findings, Brimyr gates the coverage of your change, and a repo wants both.
+[Diatreme](https://github.com/MagmaMoose/diatreme) builds and releases.
+
+It also does the thing SonarSource's own action declines to: **`SonarSource/sonarqube-scan-action`
+explicitly does not support .NET** and tells you to run SonarScanner for .NET
+yourself. Brimyr does that for you — `begin` → `dotnet build --no-incremental` →
+your tests → `end` — automatically, when it detects a .NET repo.
 
 ## Two faces, kept separate
 
@@ -33,6 +61,53 @@ and changed* lines to a bar, leave the back-catalogue alone.
 
 - **Gate** on what *this PR* changed → actionable, no legacy-debt noise.
 - **Ship** the full coverage to SonarQube → the long-run trend and quality gate.
+
+## What the author sees
+
+One comment per pull request, updated in place — both numbers, so the author gets the
+picture rather than just a verdict:
+
+```
+## 🟣 Brimyr — patch coverage
+
+**Mode:** `pr` · **Gate:** `pass` · **Ecosystem:** .NET, JavaScript / TypeScript
+
+| Metric | Value |
+|--------|-------|
+| Patch coverage | **92.3%** |
+| Covered / changed executable lines | 24 / 26 |
+| Total coverage (measured files) | 61.4% |
+| Covered / executable lines across 318 file(s) | 8,204 / 13,362 |
+| Threshold | 80.0% |
+
+✅ Patch coverage 92.3% meets the 80.0% threshold.
+```
+
+The gate is the patch number alone. A codebase at 61% does not fail a well-tested
+change — that is the whole point — but the author still sees where the repo stands.
+
+Small diffs are exempt and **say so**, rather than passing quietly:
+
+```
+⚪ Only 3 changed executable line(s) — below the 20-line minimum, so the 80.0%
+threshold was not applied (patch coverage was 33.3%).
+```
+
+SonarQube applies the same 20-line rule and says nothing about it, which is how a team
+ends up believing small PRs are gated when they are not. `min_lines: '0'` closes it.
+
+## Rollout cost is the point
+
+The comparison that matters is not "which tool computes coverage" — it is what it takes
+to switch this on across an estate. For eight repos in four languages:
+
+| | SonarQube | Brimyr |
+| --- | --- | --- |
+| Server to host / licence | a server, or a per-committer plan | none |
+| Per repo | a project, a token, a quality gate, workflow YAML | one `uses:` line |
+| Per ecosystem | a *different scanner* — `dotnet sonarscanner` for .NET, `mvn sonar:sonar` for Java, the CLI for the rest | detected |
+| Producing the coverage report | yours to work out, per language | it runs your tests |
+| Per-PR diff coverage | Developer Edition and above | included |
 
 ## Coverage is a byproduct of the test run
 

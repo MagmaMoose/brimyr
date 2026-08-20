@@ -1,9 +1,21 @@
 # Brimyr
 
-Brimyr is a **patch-coverage gate**. On a pull request it auto-detects the repo's
-ecosystem, runs the right test command with coverage instrumentation on, and gates
-**only on the coverage of the lines the PR changed** (diff-cover style) — blocking
+**Point Brimyr at any repo and it figures out the rest.** It detects the ecosystem,
+runs the test suite with coverage instrumentation on, and gates the pull request on
+the coverage of the lines that pull request changed (diff-cover semantics) — blocking
 below a threshold (default **80%**). Pre-existing uncovered code never blocks.
+
+```yaml
+      - uses: magmamoose/brimyr@v1     # that is the whole configuration
+```
+
+That is the part nothing else does. Patch-coverage *maths* is well-trodden; what
+every other tool has in common is that **you bring your own coverage report** — you
+work out the right test command for each language and wire it per repo. Across an
+estate in several languages, that wiring *is* the project.
+
+Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
+is **security assurance**. Twins, not competitors.
 
 The same run, non-blocking, drives `sonar-scanner` to ship quality + coverage to
 SonarQube for the long-run trend. It is the coverage sibling of
