@@ -130,6 +130,21 @@ inputs:
     default: '8.1.0.6389'
 
   # ── Output ───────────────────────────────────────────────────────────────
+  html_report:
+    description: >-
+      Render the coverage reports to a browsable HTML report and upload it as a build
+      artifact. Wraps ReportGenerator (Apache-2.0), which sniffs Cobertura, lcov and
+      JaCoCo per file, so a polyglot repo gets one report. Off by default: it installs
+      ReportGenerator, which is free on GitHub-hosted runners (the .NET SDK is
+      preinstalled) but needs `actions/setup-dotnet` on container or self-hosted
+      runners. Failure-isolated — a missing renderer never affects the gate.
+    required: false
+    default: 'false'
+  html_artifact_name:
+    description: 'Artifact name for the HTML coverage report.'
+    required: false
+    default: 'brimyr-coverage-html'
+
   emit_json_artifact:
     description: 'Upload the patch-coverage JSON summary as a build artifact.'
     required: false
@@ -263,6 +278,27 @@ runs:
         printf '%s\n' "$bindir" >> "$GITHUB_PATH"
         echo "installed sonar-scanner"
 
+    # Only when asked for. ReportGenerator is framework-dependent .NET with no
+    # self-contained build; GitHub-hosted images ship the SDK so `--tool-path` needs no
+    # project, but a container or self-hosted runner needs actions/setup-dotnet first.
+    - name: Install ReportGenerator
+      if: inputs.html_report == 'true'
+      # Same contract as the Sonar installer: this must never be able to fail the gate.
+      # If it fails, no renderer is on PATH and brimyr reports "skipped".
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v dotnet >/dev/null 2>&1; then
+          echo "::warning::html_report needs the .NET runtime — add actions/setup-dotnet"
+          exit 0
+        fi
+        dotnet tool install --global dotnet-reportgenerator-globaltool >/dev/null 2>&1 \
+          || dotnet tool update --global dotnet-reportgenerator-globaltool >/dev/null 2>&1 \
+          || true
+        echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+        echo "using reportgenerator"
+
     - name: Brimyr gate
       id: brimyr
       shell: bash
@@ -290,6 +326,7 @@ runs:
         SONAR_ORG_IN: ${{ inputs.sonar_organization }}
         SONAR_SOURCES_IN: ${{ inputs.sonar_sources }}
         SONAR_ARGS_IN: ${{ inputs.sonar_args }}
+        HTML_REPORT_IN: ${{ inputs.html_report }}
         PR_COMMENT_IN: ${{ inputs.pr_comment }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
@@ -305,6 +342,11 @@ runs:
         base="${BASE_REF_IN:-$PR_BASE_SHA}"
         head="${HEAD_REF_IN:-${PR_HEAD_SHA:-$GH_SHA}}"
 
+        html_dir="brimyr-reports/coverage-html"
+        if [ "$HTML_REPORT_IN" = "true" ]; then
+          echo "html_dir=$html_dir" >> "$GITHUB_OUTPUT"
+        fi
+
         args=(ci
           --mode "$MODE_IN"
           --threshold "$THRESHOLD_IN"
@@ -312,6 +354,7 @@ runs:
           --repo "."
           --head "$head"
           --json-out "$json_abs")
+        [ "$HTML_REPORT_IN" = "true" ] && args+=(--html-report "$html_dir")
         [ -n "$base" ] && args+=(--base "$base")
         [ -n "$TEST_COMMAND_IN" ] && args+=(--test-command "$TEST_COMMAND_IN")
 
@@ -339,6 +382,19 @@ runs:
         fi
 
         brimyr "${args[@]}"
+
+    - name: Upload HTML coverage report
+      # always(): a failing gate (exit 1) would otherwise skip every later step, and the
+      # HTML report is MOST useful exactly when coverage fell short — that is when someone
+      # wants to browse it to find what is uncovered. Same reason the JSON artifact below
+      # carries it.
+      if: ${{ always() && inputs.html_report == 'true' && steps.brimyr.outputs.html_dir != '' }}
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.html_artifact_name }}
+        path: ${{ steps.brimyr.outputs.html_dir }}
+        if-no-files-found: ignore
 
     - name: Upload coverage JSON artifact
       if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.json_path != '' && hashFiles(steps.brimyr.outputs.json_path) != '' }}
