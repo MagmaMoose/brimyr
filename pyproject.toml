@@ -1,6 +1,6 @@
 [project]
 name = "brimyr"
-version = "1.3.3"
+version = "1.3.4"
 description = "Patch-coverage gate: auto-detect the repo's ecosystem, run tests with coverage, and gate on the coverage of the lines this PR changed (diff-cover style)."
 readme = "README.md"
 requires-python = ">=3.11"
