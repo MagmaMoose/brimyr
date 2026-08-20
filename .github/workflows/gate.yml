@@ -31,7 +31,7 @@ on:
         type: string
         default: ''
       ecosystem:
-        description: 'Force ecosystem(s): comma-separated python|javascript|dotnet.'
+        description: 'Force ecosystem(s): comma-separated python|javascript|dotnet|java.'
         type: string
         default: ''
       test_command:

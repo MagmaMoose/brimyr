@@ -29,6 +29,7 @@ from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
 from brimyr import sonar as sonar_mod
 from brimyr.coverage.diff import DiffIndex
+from brimyr.coverage.jacoco import is_jacoco
 from brimyr.coverage.model import CoverageReport, merge_reports
 from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage
 from brimyr.detect import (
@@ -50,8 +51,15 @@ from brimyr.runner import IngestError, RunResult, ingest_file, run_tests
 _EXT_FORMAT = {
     ".info": CoverageFormat.LCOV,
     ".lcov": CoverageFormat.LCOV,
-    ".xml": CoverageFormat.COBERTURA,
 }
+
+# `.xml` is deliberately NOT in the map above: it is not a format. Cobertura (coverage.py,
+# coverlet, ReportGenerator) and JaCoCo (the whole JVM) both write `.xml`, and guessing
+# wrong is SILENT rather than loud — the Cobertura parser finds no `<class filename=...>`
+# in a JaCoCo file, returns an empty report, and every changed Java file then contributes
+# nothing to the denominator. That reads as a comfortable pass over completely untested
+# code. So `.xml` is resolved by looking at the root element instead.
+_XML_HEAD_BYTES = 8192
 
 
 def _eprint(message: str) -> None:
@@ -72,11 +80,31 @@ def _parse_coverage_arg(spec: str) -> tuple[Path, CoverageFormat]:
         return Path(path_part), CoverageFormat(fmt_part.strip().lower())
     path = Path(spec)
     fmt = _EXT_FORMAT.get(path.suffix.lower())
+    if fmt is None and path.suffix.lower() == ".xml":
+        fmt = _sniff_xml_format(path)
     if fmt is None:
         raise ValueError(
-            f"cannot infer coverage format for {path} — append ':lcov' or ':cobertura'"
+            f"cannot infer coverage format for {path} — append ':lcov', ':cobertura' or ':jacoco'"
         )
     return path, fmt
+
+
+def _sniff_xml_format(path: Path) -> CoverageFormat:
+    """Tell JaCoCo XML from Cobertura XML by its root element.
+
+    Reads only the head of the file — a multi-module JaCoCo report runs to megabytes
+    and the root element is in the first line or two, after the XML declaration and
+    the DOCTYPE that JaCoCo always emits.
+
+    An unreadable or missing file resolves to Cobertura, which is not a guess so much
+    as a deferral: `ingest_file` opens it moments later and raises the real
+    "could not read" error, and that is a far better message than one about formats.
+    """
+    try:
+        head = path.read_bytes()[:_XML_HEAD_BYTES].decode("utf-8", errors="replace")
+    except OSError:
+        return CoverageFormat.COBERTURA
+    return CoverageFormat.JACOCO if is_jacoco(head) else CoverageFormat.COBERTURA
 
 
 def _patch_policy(args: argparse.Namespace, extra_prefixes: tuple[str, ...] = ()) -> PatchPolicy:
@@ -522,7 +550,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--ecosystem",
         action="append",
         metavar="KEY",
-        help="Force an ecosystem (python|javascript|dotnet) instead of auto-detect. Repeatable.",
+        help=(
+            "Force an ecosystem (python|javascript|dotnet|java) instead of auto-detect. Repeatable."
+        ),
     )
     ci.add_argument(
         "--test-command",

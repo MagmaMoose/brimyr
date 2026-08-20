@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-20T00:00:00Z",
+  "generated": "2026-08-20",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -86,6 +86,18 @@
         "coverage.model"
       ]
     },
+    "coverage.jacoco": {
+      "path": "src/brimyr/coverage/jacoco.py",
+      "purpose": "JaCoCo XML -> CoverageReport. Its own format, NOT Cobertura: path is <package>/<sourcefile>, and a line is covered iff ci (covered instructions) > 0. is_jacoco() sniffs the root element (<report> vs <coverage>) because both formats use .xml and guessing wrong yields an empty report, i.e. a silent vacuous pass.",
+      "exports": [
+        "parse_jacoco",
+        "is_jacoco",
+        "JacocoError"
+      ],
+      "depends_on": [
+        "coverage.model"
+      ]
+    },
     "coverage.patch": {
       "path": "src/brimyr/coverage/patch.py",
       "purpose": "THE GATE'S HEART. Intersects a DiffIndex with a CoverageReport: added lines AND executable lines -> covered/missing per file, plus the overall percentage. Path matching goes exact -> prefix-stripped -> suffix in either direction (PatchPolicy).",
@@ -118,7 +130,7 @@
     },
     "detect": {
       "path": "src/brimyr/detect.py",
-      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report.",
+      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report; locate_coverage_files returns ALL matches (multi-project .NET solutions, multi-module Maven reactors). Java is Maven-only on purpose \u2014 build.gradle is a marker but is not auto-detected, since the built-in command is mvn.",
       "exports": [
         "detect_ecosystems",
         "ecosystem",

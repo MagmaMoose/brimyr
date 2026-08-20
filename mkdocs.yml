@@ -36,6 +36,7 @@ nav:
   - Patch coverage: patch-coverage.md
   - Setup & usage: setup.md
   - .NET solutions: dotnet.md
+  - Java / JVM: java.md
   - PR comment: pr-comment.md
   - CLI reference: cli.md
 

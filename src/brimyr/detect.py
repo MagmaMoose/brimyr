@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -24,6 +24,7 @@ from pathlib import Path
 class CoverageFormat(StrEnum):
     LCOV = "lcov"
     COBERTURA = "cobertura"
+    JACOCO = "jacoco"
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,46 @@ def _js_has_test_signal(root: Path) -> bool:
         return False
     # `npm init` writes a placeholder `test` script that just errors out; not a run.
     return "no test specified" not in test_script
+
+
+def _js_uses_vitest(root: Path) -> bool:
+    """True if the repo's JS tests run under vitest rather than jest.
+
+    Vue/Vite projects are overwhelmingly vitest, and `_js_has_test_signal` already
+    counts a `vitest.config.*` as a real test signal — so without this the repo is
+    detected as JS and then handed the *jest* command, which fails the run and turns
+    the build red. Same coverage output (`coverage/lcov.info`), different binary.
+    """
+    if any(
+        any(root.glob(f"vitest.config.{ext}")) for ext in ("js", "cjs", "mjs", "ts", "mts", "json")
+    ):
+        return True
+    try:
+        data = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    deps = {**data.get("devDependencies", {}), **data.get("dependencies", {})}
+    if "vitest" in deps:
+        return True
+    # Also detect 'vitest' in the test script string.
+    scripts = data.get("scripts")
+    test_script = scripts.get("test") if isinstance(scripts, dict) else None
+    return isinstance(test_script, str) and "vitest" in test_script
+
+
+def _java_is_maven(root: Path) -> bool:
+    """True only for a Maven build — the built-in test command is `mvn`.
+
+    `build.gradle` is a marker because a Gradle repo IS a Java repo worth naming in
+    a detection failure, but running `mvn` in one would fail the run and trip the
+    broken-run rule into a red build. Gradle users pass `test_command` +
+    `coverage_file` explicitly (the JaCoCo *parser* is shared — only the invocation
+    differs), so refusing to auto-detect here is the honest default rather than a
+    guess that breaks their pipeline.
+    """
+    return (root / "pom.xml").is_file()
 
 
 # Built-in ecosystems. Order is the detection/run order for polyglot repos.
@@ -129,13 +170,55 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         # (begin/end), not a plain `sonar-scanner` -D property, so leave it unset.
         sonar_property="",
     ),
+    Ecosystem(
+        key="java",
+        label="Java / JVM",
+        markers=("pom.xml", "build.gradle", "build.gradle.kts"),
+        test_command=(
+            "mvn",
+            "-B",
+            "org.jacoco:jacoco-maven-plugin:prepare-agent",
+            "test",
+            "org.jacoco:jacoco-maven-plugin:report",
+        ),
+        coverage_format=CoverageFormat.JACOCO,
+        # Multi-module reactors are the norm on the JVM, and each module writes its
+        # OWN report under its own target/. The leading `**/` is what picks up every
+        # module; a single-module build matches the same pattern at depth 0.
+        coverage_paths=(
+            "**/target/site/jacoco/jacoco.xml",
+            "**/build/reports/jacoco/**/*.xml",
+        ),
+        sonar_property="sonar.coverage.jacoco.xmlReportPaths",
+        confirm=_java_is_maven,
+    ),
 )
 
-_BY_KEY = {eco.key: eco for eco in ECOSYSTEMS}
+_BY_KEY_SOURCE = {eco.key: eco for eco in ECOSYSTEMS}
+
+# The jest table entry with only the command swapped: same markers, same lcov output at
+# `coverage/lcov.info`, same Sonar property. Not a separate ECOSYSTEMS row, because it
+# would double-match every `package.json` in a polyglot repo and run the suite twice.
+_VITEST = replace(
+    _BY_KEY_SOURCE["javascript"],
+    label="JavaScript / TypeScript (vitest)",
+    test_command=(
+        "npx",
+        "--yes",
+        "vitest",
+        "run",
+        "--coverage",
+        "--coverage.reporter=lcov",
+        "--coverage.reporter=text-summary",
+        "--passWithNoTests",
+    ),
+)
+
+_BY_KEY = {**_BY_KEY_SOURCE, "vitest": _VITEST}
 
 
 def ecosystem(key: str) -> Ecosystem | None:
-    """Look up a built-in ecosystem by key (python | javascript | dotnet)."""
+    """Look up a built-in ecosystem by key (python | javascript | dotnet | java)."""
     return _BY_KEY.get(key.strip().lower())
 
 
@@ -157,11 +240,12 @@ def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
     with ``--ecosystem`` to bypass detection entirely.
     """
     root = Path(repo)
-    return [
+    found = [
         eco
         for eco in ECOSYSTEMS
         if _has_marker(root, eco.markers) and (eco.confirm is None or eco.confirm(root))
     ]
+    return [_VITEST if eco.key == "javascript" and _js_uses_vitest(root) else eco for eco in found]
 
 
 def locate_coverage_files(eco: Ecosystem, repo: str | Path = ".") -> list[Path]:

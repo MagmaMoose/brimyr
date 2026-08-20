@@ -43,8 +43,9 @@ separate "measure coverage" pass. Brimyr auto-detects which command to run:
 | Ecosystem | Markers | Test command | Coverage |
 | --- | --- | --- | --- |
 | **Python** | `pyproject.toml`, `setup.py`, `tox.ini`, … | `pytest --cov --cov-report=xml` | Cobertura |
-| **JS / TS** | `package.json` | `jest --coverage --coverageReporters=lcov` | lcov |
+| **JS / TS** | `package.json` | `jest` — or `vitest run` when the repo uses vitest | lcov |
 | **.NET** | `*.csproj`, `*.sln`, … | `dotnet test --collect:"XPlat Code Coverage"` | Cobertura |
+| **Java / JVM** | `pom.xml` | `mvn … jacoco:prepare-agent test jacoco:report` | JaCoCo |
 
 Polyglot repos (a JS frontend + a Python backend) match more than one and produce
 **one coverage file per language**; Brimyr runs each and merges the reports.
