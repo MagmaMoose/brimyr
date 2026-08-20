@@ -184,20 +184,43 @@ runs:
     # green. Only runs when a host URL is actually set, so the cost is zero otherwise.
     - name: Install SonarScanner
       if: inputs.sonar_url != ''
+      # Non-fatal BY CONTRACT. Everything about the Sonar leg is failure-isolated — an
+      # outage or a bad URL is a warning and the run continues — and an install that can
+      # fail the composite action would break that guarantee at the one point the rest of
+      # the design cannot defend. If this step fails, no scanner lands on PATH, brimyr
+      # reports "skipped (not found on PATH)", and the gate is unaffected.
+      continue-on-error: true
       shell: bash
       env:
         SCANNER_VERSION: ${{ inputs.sonar_scanner_version }}
       run: |
         set -euo pipefail
+
+        # SCANNER_VERSION is consumer-controlled and lands in a line appended to
+        # $GITHUB_PATH, so an embedded newline would let it prepend an arbitrary
+        # directory to PATH for every later step. Digits and dots only.
+        # `case` and not `grep -E`: grep matches per LINE, so "8.1.0\n/tmp/evil/bin"
+        # passes an anchored regex on the strength of its first line — which is the whole
+        # injection. A shell glob tests the entire value, newlines included.
+        case "$SCANNER_VERSION" in
+          ''|*[!0-9.]*)
+            echo "::error::sonar_scanner_version must be digits and dots only"
+            exit 1 ;;
+        esac
         # C#/VB.NET cannot be analyzed by the CLI scanner at all — Sonar documents this —
         # so a .NET repo needs the MSBuild-integrated scanner instead. Pick by what is in
         # the tree, not by an input, so a consumer cannot get it wrong.
         if command -v dotnet >/dev/null 2>&1 \
            && find . -maxdepth 4 \( -name '*.sln' -o -name '*.csproj' -o -name '*.vbproj' \) \
                 -not -path './.git/*' -print -quit | grep -q .; then
-          dotnet tool install --global dotnet-sonarscanner >/dev/null
+          # Already-installed is not an error: `dotnet tool install` exits non-zero when
+          # the tool is present, which is the normal case on a self-hosted or cached
+          # runner. Fall through to update, then to "it is already there".
+          dotnet tool install --global dotnet-sonarscanner >/dev/null 2>&1 \
+            || dotnet tool update --global dotnet-sonarscanner >/dev/null 2>&1 \
+            || true
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
-          echo "installed dotnet-sonarscanner"
+          echo "using dotnet-sonarscanner"
           exit 0
         fi
 

@@ -330,8 +330,12 @@ def _missing_sonar_props(
     ecosystems: Sequence[Ecosystem], extra_args: Sequence[str]
 ) -> dict[str, tuple[str, ...]]:
     """Required Sonar properties an ecosystem needs that the caller did not supply."""
+    # removeprefix, not lstrip: lstrip strips a character SET, so `/d:d.foo` would lose
+    # its leading `d` as well and never match the required property name.
     supplied = {
-        arg.split("=", 1)[0].lstrip("-D").lstrip("/d:").strip() for arg in extra_args if "=" in arg
+        arg.split("=", 1)[0].removeprefix("-D").removeprefix("/d:").strip()
+        for arg in extra_args
+        if "=" in arg
     }
     missing: dict[str, tuple[str, ...]] = {}
     for eco in ecosystems:
