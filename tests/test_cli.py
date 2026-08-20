@@ -73,7 +73,19 @@ def test_coverage_fail_below_threshold(repo, tmp_path):
     repo_dir, base = repo
     cov = tmp_path / "coverage.xml"
     _cobertura(cov, {4: 1, 5: 0})  # one of two covered -> 50% < 80%
-    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(cov),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
     assert code == 1
 
 
@@ -211,6 +223,10 @@ def test_json_out_written(repo, tmp_path):
             str(repo_dir),
             "--json-out",
             str(out),
+            # 2 changed lines is under the default sample-size floor; this test is about
+            # the JSON shape and the fail verdict, not about the floor.
+            "--min-lines",
+            "0",
         ]
     )
     data = json.loads(out.read_text())
@@ -270,7 +286,19 @@ def test_jacoco_xml_is_not_read_as_cobertura(java_repo, tmp_path):
     repo_dir, base = java_repo
     cov = tmp_path / "jacoco.xml"
     _jacoco(cov, {4: 0, 5: 0})  # neither changed line covered -> 0%
-    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(cov),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
     assert code == 1  # nosec B101
 
 
@@ -288,7 +316,17 @@ def test_explicit_jacoco_format_suffix_wins(java_repo, tmp_path):
     cov = tmp_path / "merged.report"
     _jacoco(cov, {4: 1, 5: 0})  # 50% < 80%
     code = main(
-        ["coverage", "--coverage-file", f"{cov}:jacoco", "--base", base, "--repo", str(repo_dir)]
+        [
+            "coverage",
+            "--coverage-file",
+            f"{cov}:jacoco",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
     )
     assert code == 1  # nosec B101
 

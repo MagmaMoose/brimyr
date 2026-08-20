@@ -23,6 +23,9 @@
   nothing → empty analysis). Sonar needs an installed scanner *and* a project key; both
   were missing, so it silently "skipped" while builds stayed green. Warn via
   `::warning::`, never bare stderr.
+- **Sample-size floor**: `min_lines` (default 20, matching SonarQube) skips the
+  threshold under 20 changed executable lines. Tests asserting threshold behaviour on
+  small fixtures need `min_lines=0` or they pass for the wrong reason. Never silent.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not the callers.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.

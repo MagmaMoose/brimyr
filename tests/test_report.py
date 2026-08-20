@@ -14,6 +14,10 @@ def _decision(make_report, covered, total, threshold=80.0, **kw):
     lines = {i: (1 if i <= covered else 0) for i in range(1, total + 1)}
     diff = DiffIndex((FileDiff("a.py", "added", ((1, total),)),)) if total else DiffIndex(())
     patch = compute_patch_coverage(diff, make_report({"a.py": lines} if total else {}))
+    # These fixtures are deliberately small (10 lines) to keep them readable, which puts
+    # them under the default sample-size floor. Default to 0 here so each test exercises
+    # the rendering it was written for; the floor has its own tests.
+    kw.setdefault("min_lines", 0)
     return decide_gate(patch, threshold, **kw)
 
 
