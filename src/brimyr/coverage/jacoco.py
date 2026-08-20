@@ -34,6 +34,16 @@ Three differences from Cobertura drive everything here:
   file cannot be sniffed by its first bytes alone. :func:`is_jacoco` looks at the
   root element instead.
 
+On the ``# nosec``/``# nosemgrep`` suppressions below: the **XXE** half of that warning does
+not apply. ElementTree does not resolve external entities — ``<!ENTITY xxe SYSTEM
+"file:///etc/passwd">`` raises ``undefined entity`` rather than reading the file (measured,
+not assumed), so there is no data-leak path, and ``defusedxml`` is ruled out regardless by
+the stdlib-only core. **Entity-expansion DoS** ("billion laughs") *does* apply: ElementTree
+expands internal entities happily. The exposure is narrow — the file is written by the
+repo's own test run inside the same job — but it is real when ``coverage_file`` points at a
+committed file in a fork PR, and it applies identically to :mod:`brimyr.coverage.cobertura`.
+The fix therefore belongs in both parsers and is deliberately not bolted on here.
+
 Multi-module reactors write **one report per module** (``*/target/site/jacoco/
 jacoco.xml``); ingesting all of them and merging is the caller's job, exactly as
 for a multi-project .NET solution. **Pure**: parses a string, touches no files.
@@ -42,19 +52,9 @@ for a multi-project .NET solution. **Pure**: parses a string, touches no files.
 from __future__ import annotations
 
 from io import BytesIO
-
-# Suppressed below, with the reasoning in the code rather than only in a commit message.
-# The XXE half of the warning does not apply: ElementTree does NOT resolve external
-# entities — `<!ENTITY xxe SYSTEM "file:///etc/passwd">` raises `undefined entity` rather
-# than reading the file (measured on this runtime, not assumed), so there is no data-leak
-# path. `defusedxml` is ruled out regardless: the core is stdlib-only by design.
-#
-# Entity-expansion DoS ("billion laughs") DOES apply — ElementTree expands internal
-# entities happily. The exposure is narrow, since the file is written by the repo's own
-# test run inside the same job, but it is real when `coverage_file` points at a committed
-# file in a fork PR. It applies identically to cobertura.py, so the fix belongs in both
-# parsers and is deliberately not bolted on here.
-from xml.etree import ElementTree as ET  # nosec B405  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
+from xml.etree import (
+    ElementTree as ET,  # nosec B405  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
+)
 
 from brimyr.coverage.model import CoverageBuilder, CoverageReport
 
