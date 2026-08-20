@@ -1,12 +1,14 @@
 # Patch coverage
 
+<!-- sources: src/brimyr/coverage/patch.py, src/brimyr/coverage/diff.py, src/brimyr/gate.py -->
+
 **Patch coverage** is the fraction of *changed executable lines* the test run
-covered. A line counts iff it is **changed by the PR** — in an added/modified hunk
-on the new side, diffed against `merge-base(base, head)` — **and** the coverage
-tool considers it **executable**. The merge-base is robust to base-branch rebases
+covered. A line counts iff it is **changed by the PR**: in an added/modified hunk
+on the new side, diffed against `merge-base(base, head)`, **and** the coverage
+tool considers it **executable**. The merge-base survives base-branch rebases
 and force-pushes.
 
-```
+```text
             covered changed-executable lines
 patch % = ───────────────────────────────────── × 100
               all changed-executable lines
@@ -16,26 +18,26 @@ patch % = ───────────────────────�
 
 | Case | Behaviour | Configurable |
 | --- | --- | --- |
-| Brand-new file | every executable line counts | — |
-| Modified hunk | only the changed executable lines count | — |
-| Pre-existing uncovered line in a changed file | excluded — never penalised | — |
-| Blank line / comment / brace | excluded (not in the coverage report) | — |
-| Changed file the report never mentions (a doc, an untested new file) | contributes nothing (diff-cover behaviour) | — |
-| Renamed / copied file | matched by head path; changed lines line-matched | — |
-| Deleted file | dropped | — |
-| Nothing coverable changed (docs-only PR) | **vacuous pass** (100%) | — |
-| Broken / empty test run | **tool error (exit 2)**, not 0% | — |
-| Missing merge-base / shallow clone | **fails loudly** — needs `fetch-depth: 0` | — |
+| Brand-new file | every executable line counts | none |
+| Modified hunk | only the changed executable lines count | none |
+| Pre-existing uncovered line in a changed file | excluded: never penalised | none |
+| Blank line / comment / brace | excluded (not in the coverage report) | none |
+| Changed file the report never mentions (a doc, an untested new file) | contributes nothing (diff-cover behaviour) | none |
+| Renamed / copied file | matched by head path; changed lines line-matched | none |
+| Deleted file | dropped | none |
+| Nothing coverable changed (docs-only PR) | **vacuous pass** (100%) | none |
+| Broken / empty test run | **tool error (exit 2)**, not 0% | none |
+| Missing merge-base / shallow clone | **fails loudly**: needs `fetch-depth: 0` | none |
 
 The denominator is deliberately *changed-and-executable*: coverage tools only
 report executable lines, so blank lines and comments fall out naturally, and a
-genuinely untested new file the suite never imported isn't in the report — it
+genuinely untested new file the suite never imported isn't in the report, it
 contributes nothing rather than tanking the score. This matches `diff-cover`.
 
 ## Why a broken run is not 0%
 
 If the test command exits non-zero or emits no parseable coverage, reporting that
-as "0% patch coverage" would be actively misleading — it conflates *no signal* with
+as "0% patch coverage" would be actively misleading: it conflates *no signal* with
 *bad signal*. Brimyr treats it as a **tool error (build red, exit 2)** instead, the
 same philosophy as a broken security scanner being a tool error, not a finding.
 
@@ -55,7 +57,7 @@ monorepo subdir, a Cobertura `<source>`) before matching.
 ## The threshold
 
 `threshold` (default **80**) is the patch-coverage percentage below which the gate
-blocks. `--no-gate` (or baseline mode) makes the run report-only — coverage is
+blocks. `--no-gate` (or baseline mode) makes the run report-only: coverage is
 still computed and shipped to SonarQube, nothing blocks.
 
 ### The sample-size floor
@@ -65,8 +67,8 @@ threshold is **not applied**. Below that the percentage is too coarse to act on:
 uncovered line out of three is 67%, which fails an 80% gate while telling you nothing
 useful about the change.
 
-SonarQube applies exactly this rule at exactly this number — *"the conditions on coverage
-are ignored until the number of new lines to cover is at least 20"* — so matching it stops
+SonarQube applies exactly this rule at exactly this number: *"the conditions on coverage
+are ignored until the number of new lines to cover is at least 20"*, so matching it stops
 a Brimyr verdict and a SonarQube verdict from disagreeing on small pull requests.
 
 !!! warning "It is a hole, deliberately"
@@ -74,29 +76,29 @@ a Brimyr verdict and a SonarQube verdict from disagreeing on small pull requests
     one that makes a project-level coverage gate unusable, just much smaller. The
     difference is that Brimyr **says so**:
 
-    ```
-    ⚪ Only 3 changed executable line(s) — below the 20-line minimum, so the 80.0%
+    ```text
+    ⚪ Only 3 changed executable line(s), below the 20-line minimum, so the 80.0%
     threshold was not applied (patch coverage was 33.3%).
     ```
 
     SonarQube applies the same exemption silently, which is how a team ends up believing
     small PRs are gated when they are not. Set `min_lines: '0'` to gate every diff.
 
-A diff with **no** coverable lines at all is still a separate case — a vacuous pass, the
-same as a docs-only change — and is reported as such rather than as "too small".
+A diff with **no** coverable lines at all is still a separate case, a vacuous pass, the
+same as a docs-only change, and is reported as such rather than as "too small".
 
 !!! tip "Local gate, Sonar trend"
-    The gate is computed **locally** from the coverage file — it never depends on
+    The gate is computed **locally** from the coverage file, it never depends on
     SonarQube. The `sonar-scanner` run is a separate, non-blocking step that feeds
     Sonar the same coverage for the long-run trend.
 
 ## Total coverage, reported next to it
 
 Brimyr also reports an **overall** coverage figure alongside the patch number. It is
-reported and never gated on — the same split Chargate uses, where the build blocks on
+reported and never gated on: the same split Chargate uses, where the build blocks on
 net-new findings but the full SARIF still ships.
 
-```
+```text
 | Patch coverage                             | **100.0%** |
 | Covered / changed executable lines         | 2 / 2      |
 | Total coverage (measured files)            | 7.3%       |
@@ -110,7 +112,7 @@ patch coverage alone. A codebase at 7% total does not fail a well-tested PR.
 
 **"Total coverage (measured files)", not "project coverage".** A coverage report only
 mentions files the test run loaded, so a module no test imports is absent from the
-report and therefore absent from this denominator — which means **adding a brand-new
+report and therefore absent from this denominator, which means **adding a brand-new
 untested file can raise it**. Say "coverage of what we measured".
 
 It also will not match SonarQube's figure, which applies its own

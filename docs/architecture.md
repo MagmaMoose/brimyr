@@ -1,24 +1,30 @@
 # Architecture
 
+<!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/runner.py, broker/app/broker.py -->
+
 Brimyr is one `brimyr` Python CLI (`src/brimyr/cli.py:main`) behind three GitHub
 surfaces. The design splits cleanly into a **pure core** and a thin set of
 **side-effecting edges**.
 
 ## Module map
 
-```
+```text
 src/brimyr/
   cli.py          # argparse dispatch: coverage | ci | local | version
-  coverage/       # ★ THE PURE CORE — deterministic, no I/O, heavily tested
+  coverage/       # ★ THE PURE CORE: deterministic, no I/O, heavily tested
     diff.py       #   unified-diff text -> DiffIndex (changed files + added line ranges)
     model.py      #   CoverageReport / FileCoverage + CoverageBuilder (covered-wins merge)
-    lcov.py       #   lcov .info   -> CoverageReport
+    lcov.py       #   lcov .info    -> CoverageReport
     cobertura.py  #   Cobertura XML -> CoverageReport
+    jacoco.py     #   JaCoCo XML    -> CoverageReport (its own format, not Cobertura)
     patch.py      #   DiffIndex ∩ CoverageReport -> PatchCoverage  (the gate's heart)
+                  #   + compute_total_coverage: the reported, never-gated total
   git.py          # the ONLY git/subprocess boundary (merge-base, diff, shallow detect)
   detect.py       # ecosystem markers -> Ecosystem (test command + coverage format)
   runner.py       # run tests with coverage, locate + ingest the file (broken-run rule)
   sonar.py        # sonar-scanner runner (failure-isolated, never raises)
+  sonar_dotnet.py # dotnet sonarscanner begin/end WRAPPING the build (.NET only)
+  html_report.py  # ReportGenerator wrapper -> browsable HTML artifact (optional)
   gate.py         # patch % + threshold -> pass/fail + exit code
   modes.py        # PR (gate) vs baseline (no gate) resolution
   report.py       # GitHub job summary + step outputs (also renders the PR comment)
@@ -30,12 +36,12 @@ src/brimyr/
 ## The design rule
 
 `coverage/` is **pure**: it takes already-parsed data (unified-diff text + a
-coverage report) and returns numbers. `git.py`, `runner.py`, and `sonar.py` are the
-only modules that shell out, and each injects its runner, so the core is unit-tested
-with synthetic diff text and coverage strings — no real repository or toolchain
-required. The two network edges, `github_comment.py` and `broker_client.py`, follow
+coverage report) and returns numbers. `git.py`, `runner.py`, `sonar.py`,
+`sonar_dotnet.py` and `html_report.py` are the only modules that shell out, and each
+injects its runner, so the core is unit-tested with synthetic diff text and coverage
+strings, no real repository or toolchain required. The two network edges, `github_comment.py` and `broker_client.py`, follow
 the same shape: stdlib `urllib` only, with the opener injected so the tests need no
-network — and neither ever raises out into the gate.
+network, and neither ever raises out into the gate.
 
 !!! warning "Keep the boundary"
     Do **not** import `subprocess`, `os`, network code, or GitHub Actions into
@@ -62,7 +68,7 @@ network — and neither ever raises out into the gate.
    failure-isolated: it never raises, so a Sonar outage can't fail the gate.
 8. **`report`** writes the GitHub job summary and step outputs.
 9. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
-   on the PR as a single marker-owned comment — creating it once, then `PATCH`ing it
+   on the PR as a single marker-owned comment, creating it once, then `PATCH`ing it
    on every later push. When `token_broker_url` is set,
    **`broker_client.mint_bot_token`** first exchanges the job's Actions OIDC token
    for a `Brimyr[bot]` installation token; on any failure it returns `None` and the
@@ -73,8 +79,8 @@ ships to Sonar, and never blocks.
 
 ## The token broker is not part of the CLI
 
-`broker/` in the repository is a **separate deployable** — the AWS Lambda service
-that mints `Brimyr[bot]` tokens — with its own `pyproject.toml`, lockfile, Ruff
+`broker/` in the repository is a **separate deployable**: the AWS Lambda service
+that mints `Brimyr[bot]` tokens, with its own `pyproject.toml`, lockfile, Ruff
 config and CI job. Nothing under `src/brimyr` imports it; `broker_client.py` talks
 to it over HTTPS like any other remote service, which is what keeps the CLI
 stdlib-only and dependency-free. Its architecture, local LocalStack loop and go-live
