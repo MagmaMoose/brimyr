@@ -133,6 +133,16 @@ outputs:
   total_lines:
     description: 'Total changed executable lines (the patch-coverage denominator).'
     value: ${{ steps.brimyr.outputs.total_lines }}
+  total_coverage:
+    # NOT `total_lines` — that name already ships meaning the patch denominator.
+    # Empty string when the run measured nothing, never '0.00': an unmeasured run and a
+    # genuinely zero-covered one must not look the same to a downstream `if`.
+    description: >-
+      Overall coverage percentage across the files the run MEASURED (reported, never
+      gated on). Not the repository's coverage: a file no test imports is absent from
+      the report and therefore absent from this denominator. Empty when nothing was
+      measured.
+    value: ${{ steps.brimyr.outputs.total_coverage }}
 
 runs:
   using: composite

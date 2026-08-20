@@ -62,3 +62,52 @@ still computed and shipped to SonarQube, nothing blocks.
     The gate is computed **locally** from the coverage file — it never depends on
     SonarQube. The `sonar-scanner` run is a separate, non-blocking step that feeds
     Sonar the same coverage for the long-run trend.
+
+## Total coverage, reported next to it
+
+Brimyr also reports an **overall** coverage figure alongside the patch number. It is
+reported and never gated on — the same split Chargate uses, where the build blocks on
+net-new findings but the full SARIF still ships.
+
+```
+| Patch coverage                             | **100.0%** |
+| Covered / changed executable lines         | 2 / 2      |
+| Total coverage (measured files)            | 7.3%       |
+| Covered / executable lines across 2 file(s)| 3 / 41     |
+```
+
+The gate is unchanged: `gate_result`, the exit code and `failed` all still derive from
+patch coverage alone. A codebase at 7% total does not fail a well-tested PR.
+
+### What the number actually means
+
+**"Total coverage (measured files)", not "project coverage".** A coverage report only
+mentions files the test run loaded, so a module no test imports is absent from the
+report and therefore absent from this denominator — which means **adding a brand-new
+untested file can raise it**. Say "coverage of what we measured".
+
+It also will not match SonarQube's figure, which applies its own
+`sonar.coverage.exclusions` and source scoping. That is fine and expected: this number
+is the at-a-glance trend inside a PR comment, and **SonarQube owns the authoritative
+long-run total**. If you only want one number, use Sonar's.
+
+!!! note "Nothing measured is not 100%"
+    When a run measures no executable lines, total coverage is reported as *absent*, not
+    as 100%. Patch coverage's vacuous 100% exists because a docs-only PR genuinely has
+    nothing to cover; a total of 100% over zero lines would just be a lie that looks
+    like good news. The `total_coverage` action output is an **empty string** in that
+    case, never `0.00`.
+
+### It obeys `exclude`
+
+The same globs that drop generated code from the patch denominator drop it here. They
+have to: a comment showing a patch figure that ignored the EF migrations next to a total
+that didn't would disagree by twenty points and read as a bug in the tool.
+
+### Baseline mode
+
+In baseline (report-only) mode the patch rows are **omitted** entirely rather than
+printed as a vacuous `100.0% (0 / 0)`, because baseline computes patch coverage against
+an empty diff. Baseline plus total coverage is the useful combination for a repo with no
+PR CI to attach a gate to: run it on pushes to the default branch, block nothing, and
+start producing a trend.

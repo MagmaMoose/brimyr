@@ -53,16 +53,33 @@ def render_summary(
 
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
-    lines.append(f"| Patch coverage | **{_fmt_pct(patch.percent)}** |")
-    lines.append(
-        f"| Covered / changed executable lines | {patch.covered_lines} / {patch.total_lines} |"
-    )
+    # Baseline mode computes patch coverage against an EMPTY diff, so `percent` is the
+    # vacuous 100.0% over 0/0 lines. Printing that next to a real total reads as
+    # "everything is covered" — the opposite of what a baseline run is for. Baseline is
+    # exactly the mode you use on a repo with no PR CI to attach a gate to, so it has to
+    # be the honest one.
+    if decision.gated:
+        lines.append(f"| Patch coverage | **{_fmt_pct(patch.percent)}** |")
+        lines.append(
+            f"| Covered / changed executable lines | {patch.covered_lines} / {patch.total_lines} |"
+        )
+    # Reported, never gated on. Labelled "measured" on purpose: a coverage report only
+    # mentions files the run loaded, so this is not the repository's coverage and a
+    # brand-new untested file that no test imports can raise it. SonarQube owns the
+    # authoritative long-run total; this is here for the at-a-glance trend.
+    total = decision.total
+    if total is not None and total.measured:
+        lines.append(f"| Total coverage (measured files) | {_fmt_pct(total.percent)} |")
+        lines.append(
+            f"| Covered / executable lines across {total.files} file(s) | "
+            f"{total.covered_lines} / {total.executable_lines} |"
+        )
     if decision.gated:
         lines.append(f"| Threshold | {_fmt_pct(decision.threshold)} |")
     lines.append("")
 
     if not decision.gated:
-        lines.append("📋 Baseline run — coverage shipped to SonarQube; no patch gate.")
+        lines.append("📋 Baseline run — total coverage only; no patch gate.")
         lines.append("")
     elif not patch.has_measurable:
         lines.append("✅ No changed executable lines to cover — vacuous pass.")

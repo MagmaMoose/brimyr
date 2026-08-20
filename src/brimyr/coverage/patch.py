@@ -203,3 +203,107 @@ def compute_patch_coverage(
         total_lines=total,
         covered_lines=covered_total,
     )
+
+
+@dataclass(frozen=True)
+class TotalCoverage:
+    """Overall coverage of the files a run **measured** — not of the repository.
+
+    The distinction is load-bearing and is why this is not called "project coverage".
+    A coverage report only mentions files the test run actually loaded, so a module no
+    test imports is absent from the report and therefore absent from this denominator.
+    A brand-new, wholly untested file can *raise* this number rather than lower it.
+    Say "coverage of what we measured", never "coverage of the codebase".
+
+    It also will not equal SonarQube's number, which applies its own
+    ``sonar.coverage.exclusions`` and source scoping. Two figures that disagree are
+    worse than one, so this is for the trend inside a PR comment; SonarQube owns the
+    authoritative long-run total.
+    """
+
+    covered_lines: int
+    executable_lines: int
+    files: int
+
+    @property
+    def measured(self) -> bool:
+        return self.executable_lines > 0
+
+    @property
+    def percent(self) -> float | None:
+        """Coverage percentage, or ``None`` when nothing executable was measured.
+
+        Deliberately **not** the vacuous 100.0 that :class:`PatchCoverage` returns on an
+        empty denominator. That convention exists because a docs-only PR genuinely has
+        nothing to cover and should pass; here an empty denominator means the run
+        measured nothing at all, and reporting that as "100%" would be a lie that
+        happens to look like good news.
+        """
+        if not self.measured:
+            return None
+        return 100.0 * self.covered_lines / self.executable_lines
+
+
+def _canonical_buckets(report: CoverageReport) -> list[tuple[list[str], dict[int, bool]]]:
+    """Fold report entries that are the same file spelled differently.
+
+    :func:`brimyr.coverage.model.merge_reports` folds by exact path string, which is
+    right for merging but leaves the same file present twice when two reports root it
+    differently — coverlet emitting ``/home/runner/work/r/r/src/A.cs`` from one test
+    project and ``src/A.cs`` from another. Patch coverage never notices, because
+    :func:`_match` resolves one diff path to one entry; a naive sum over
+    ``report.files`` does notice, and counts the file's lines twice. Measured, that
+    turns a fully covered shared file into 50%.
+
+    Entries are grouped by basename first so this stays linear in practice — only files
+    sharing a name are ever compared — and folded covered-wins, matching
+    :class:`CoverageBuilder`.
+    """
+    by_basename: dict[str, list[tuple[list[str], dict[int, bool]]]] = {}
+    for file_cov in report.files:
+        basename = file_cov.path.rpartition("/")[2]
+        lines = dict.fromkeys(file_cov.covered, True)
+        lines.update(dict.fromkeys(file_cov.uncovered, False))
+        for paths, merged in by_basename.setdefault(basename, []):
+            if any(_same_file(file_cov.path, known) for known in paths):
+                paths.append(file_cov.path)
+                for line, hit in lines.items():
+                    merged[line] = merged.get(line, False) or hit
+                break
+        else:
+            by_basename[basename].append(([file_cov.path], lines))
+    return [bucket for buckets in by_basename.values() for bucket in buckets]
+
+
+def _same_file(a: str, b: str) -> bool:
+    """True when two coverage paths denote the same file, one being rooted deeper."""
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return a == b or ("/" in short and long_.endswith("/" + short))
+
+
+def compute_total_coverage(
+    report: CoverageReport,
+    policy: PatchPolicy | None = None,
+) -> TotalCoverage:
+    """Overall coverage across everything ``report`` measured.
+
+    Reported alongside the patch number and never gated on — the same split chargate
+    uses, where the build blocks on net-new findings but the full picture still ships.
+
+    ``policy.exclude_globs`` is applied here too. It has to be: those globs exist to
+    drop generated code from the patch denominator, and a total that silently
+    re-included every EF migration would disagree with the patch number by twenty
+    points in the same PR comment and read as a bug. A bucket is dropped if *any* of
+    its spellings matches, so a prefix-rooted path cannot smuggle a migration back in.
+    """
+    policy = policy or PatchPolicy()
+    covered = 0
+    executable = 0
+    files = 0
+    for paths, lines in _canonical_buckets(report):
+        if any(_excluded(path, policy.exclude_globs) for path in paths):
+            continue
+        files += 1
+        executable += len(lines)
+        covered += sum(1 for hit in lines.values() if hit)
+    return TotalCoverage(covered_lines=covered, executable_lines=executable, files=files)
