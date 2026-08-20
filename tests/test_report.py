@@ -55,3 +55,11 @@ def test_sonar_message_shown(make_report):
     out = render_summary(decision, Mode.PR, sonar_message="analysis uploaded")
     assert "SonarQube" in out
     assert "analysis uploaded" in out
+
+
+def test_below_min_lines_render(make_report):
+    decision = _decision(make_report, covered=1, total=3, min_lines=20)
+    out = render_summary(decision, Mode.PR)
+    assert "⚪" in out
+    assert "3 changed executable line(s)" in out
+    assert "threshold was **not applied**" in out
