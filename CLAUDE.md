@@ -51,5 +51,5 @@ fail the gate. Start at `cli.py:_run_flow`.
 - Architectural decision → `/adr`. Public behaviour/API/config changed → `/update-docs`.
 - `PROJECT_INDEX.json` stale after a new module or refactor: regenerate that section,
   bump `generated`.
-- Auto-loaded tier (this file + @-imports) under ~1000 tokens. **Measure it** — words×1.3
+- Auto-loaded tier (this file + @-imports): currently ~1450 tokens, target ~1500. **Measure it** — words×1.3
   under-reads this content ~40%. Move detail out, never delete it.
