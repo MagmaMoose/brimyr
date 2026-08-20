@@ -146,6 +146,23 @@ what you actually saw.
 
 ## SonarQube
 
-`sonar.coverage.jacoco.xmlReportPaths` is set from the reports Brimyr found, so the same run
-that gates the pull request also feeds the SonarQube trend. That is non-blocking by design:
-Sonar being down or misconfigured never fails the gate.
+`sonar.coverage.jacoco.xmlReportPaths` is set from the reports Brimyr found, so the same
+run that gates the pull request can also feed the SonarQube trend — non-blocking, as
+always.
+
+!!! warning "Java needs `sonar.java.binaries`"
+    `sonar-scanner -Dsonar.sources=.` over a Java repo fails outright with *"please
+    provide compiled classes with sonar.java.binaries"*. Brimyr cannot infer it, so
+    rather than run a scan that cannot succeed it **skips with a warning** until you
+    supply it:
+
+    ```yaml
+        with:
+          sonar_url: https://sonar.example.com
+          sonar_args: '-Dsonar.java.binaries=**/target/classes'
+    ```
+
+    Sonar also documents that the CLI scanner should not be used for Maven or Gradle
+    projects at all — `mvn sonar:sonar` is the supported path and will give a better
+    analysis. Brimyr's patch-coverage gate is unaffected either way: it reads the JaCoCo
+    reports directly and never talks to SonarQube.

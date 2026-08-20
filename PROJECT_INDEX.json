@@ -131,14 +131,15 @@
     },
     "detect": {
       "path": "src/brimyr/detect.py",
-      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report; locate_coverage_files returns ALL matches (multi-project .NET solutions, multi-module Maven reactors). Java is Maven-only on purpose \u2014 build.gradle is a marker but is not auto-detected, since the built-in command is mvn.",
+      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report; locate_coverage_files returns ALL matches (multi-project .NET solutions, multi-module Maven reactors). Java is Maven-only on purpose \u2014 build.gradle is a marker but is not auto-detected, since the built-in command is mvn. Each Ecosystem also declares a SonarStrategy (CLI post-step vs DOTNET wrapping), report globs, a build command and required Sonar props (Java needs sonar.java.binaries or the scan is skipped).",
       "exports": [
         "detect_ecosystems",
         "ecosystem",
         "locate_coverage_file",
         "Ecosystem",
         "CoverageFormat",
-        "ECOSYSTEMS"
+        "ECOSYSTEMS",
+        "SonarStrategy"
       ],
       "depends_on": []
     },
@@ -163,7 +164,7 @@
     },
     "sonar": {
       "path": "src/brimyr/sonar.py",
-      "purpose": "Builds sonar-scanner -D arguments from a SonarConfig and runs it, failure-isolated: it never raises and never changes the gate verdict, it only returns a SonarResult message for the summary.",
+      "purpose": "Builds sonar-scanner -D arguments from a SonarConfig and runs it, failure-isolated: it never raises and never changes the gate verdict, it only returns a SonarResult message for the summary. Post-step CLI scanner; token via SONAR_TOKEN env, never argv.",
       "exports": [
         "run_scanner",
         "build_scanner_args",
@@ -171,6 +172,19 @@
         "SonarResult"
       ],
       "depends_on": []
+    },
+    "sonar_dotnet": {
+      "path": "src/brimyr/sonar_dotnet.py",
+      "purpose": "`dotnet sonarscanner begin/end` as a context manager WRAPPING the build. The CLI scanner cannot analyze C#/VB.NET at all \u2014 issues come from Roslyn analyzers `begin` injects into the compilation \u2014 so for .NET the scanner cannot be a post-step. Coverage glob is declared at `begin` (`end` takes only 3 flags). `end` always runs, including on an exception; a failed `end` removes .sonarqube/ so the next build in the workspace is not broken by leftover MSBuild hooks. Never raises.",
+      "exports": [
+        "session",
+        "build_begin_args",
+        "build_end_args",
+        "SessionOutcome"
+      ],
+      "depends_on": [
+        "sonar"
+      ]
     },
     "github_comment": {
       "path": "src/brimyr/github_comment.py",

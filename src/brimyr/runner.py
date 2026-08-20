@@ -17,7 +17,7 @@ without a real toolchain.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,6 +106,40 @@ class RunResult:
     def coverage_paths(self) -> tuple[Path, ...]:
         """Every report across every ecosystem — what Sonar's reportPaths needs."""
         return tuple(path for o in self.outcomes for path in o.coverage_paths)
+
+
+@dataclass(frozen=True)
+class CommandOutcome:
+    """Result of a plain command run (no coverage ingestion)."""
+
+    command: str
+    returncode: int
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+
+def run_command(
+    command: Sequence[str] | str,
+    repo: str | Path = ".",
+    *,
+    runner: Runner | None = None,
+) -> CommandOutcome:
+    """Run one command and report its exit status. Never raises.
+
+    Exists for the SonarScanner-for-.NET build, which has to happen between `begin` and
+    `end` and is not a test run — it produces no coverage and must not be able to fail
+    the gate. Failure isolation is the caller's contract, so a missing binary comes back
+    as a non-zero outcome rather than an exception.
+    """
+    argv = command if isinstance(command, str) else " ".join(command)
+    run_fn = runner or _default_runner
+    try:
+        completed = run_fn(argv, str(repo))
+    except OSError:
+        return CommandOutcome(command=argv, returncode=127)
+    return CommandOutcome(command=argv, returncode=completed.returncode)
 
 
 def run_one(

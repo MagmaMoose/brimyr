@@ -18,6 +18,11 @@
   string, so one file rooted two ways (multi-project .NET) counts twice — measured, 50%
   where the truth is 100%. Use `compute_total_coverage`, which folds by path-suffix and
   applies `exclude_globs`. Empty denominator ⇒ `None`, never the gate's vacuous 100%.
+- **.NET Sonar must WRAP build+test** (`sonar_dotnet.session`) — the CLI scanner cannot
+  analyze C# at all, and `--no-incremental` is load-bearing (a cached build compiles
+  nothing → empty analysis). Sonar needs an installed scanner *and* a project key; both
+  were missing, so it silently "skipped" while builds stayed green. Warn via
+  `::warning::`, never bare stderr.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not the callers.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.

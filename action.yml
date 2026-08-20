@@ -101,6 +101,23 @@ inputs:
     description: 'Sonar organization (SonarCloud).'
     required: false
     default: ''
+  sonar_sources:
+    description: 'sonar.sources (default: the repo root).'
+    required: false
+    default: ''
+  sonar_args:
+    description: >-
+      Extra Sonar properties, comma-separated, each as `-Dkey=value`. The escape hatch
+      for anything not modelled — `sonar.java.binaries` (REQUIRED for Java, see below),
+      `sonar.coverage.exclusions`, `sonar.projectVersion`.
+    required: false
+    default: ''
+  sonar_scanner_version:
+    description: >-
+      SonarScanner CLI version installed when sonar_url is set and the repo is not .NET.
+      .NET repos get `dotnet-sonarscanner` instead — the CLI scanner cannot analyze C#.
+    required: false
+    default: '8.1.0.6389'
 
   # ── Output ───────────────────────────────────────────────────────────────
   emit_json_artifact:
@@ -162,6 +179,80 @@ runs:
       shell: bash
       run: python -m pip install --disable-pip-version-check --quiet "$GITHUB_ACTION_PATH"
 
+    # Without this the Sonar leg is a silent no-op: nothing installs a scanner, so every
+    # run reported "skipped (sonar-scanner not found on PATH)" while the build stayed
+    # green. Only runs when a host URL is actually set, so the cost is zero otherwise.
+    - name: Install SonarScanner
+      if: inputs.sonar_url != ''
+      # Non-fatal BY CONTRACT. Everything about the Sonar leg is failure-isolated — an
+      # outage or a bad URL is a warning and the run continues — and an install that can
+      # fail the composite action would break that guarantee at the one point the rest of
+      # the design cannot defend. If this step fails, no scanner lands on PATH, brimyr
+      # reports "skipped (not found on PATH)", and the gate is unaffected.
+      continue-on-error: true
+      shell: bash
+      env:
+        SCANNER_VERSION: ${{ inputs.sonar_scanner_version }}
+      run: |
+        set -euo pipefail
+
+        # SCANNER_VERSION is consumer-controlled and lands in a line appended to
+        # $GITHUB_PATH, so an embedded newline would let it prepend an arbitrary
+        # directory to PATH for every later step. Digits and dots only.
+        # `case` and not `grep -E`: grep matches per LINE, so "8.1.0\n/tmp/evil/bin"
+        # passes an anchored regex on the strength of its first line — which is the whole
+        # injection. A shell glob tests the entire value, newlines included.
+        case "$SCANNER_VERSION" in
+          ''|*[!0-9.]*)
+            echo "::error::sonar_scanner_version must be digits and dots only"
+            exit 1 ;;
+        esac
+        # C#/VB.NET cannot be analyzed by the CLI scanner at all — Sonar documents this —
+        # so a .NET repo needs the MSBuild-integrated scanner instead. Pick by what is in
+        # the tree, not by an input, so a consumer cannot get it wrong.
+        if command -v dotnet >/dev/null 2>&1 \
+           && find . -maxdepth 4 \( -name '*.sln' -o -name '*.csproj' -o -name '*.vbproj' \) \
+                -not -path './.git/*' -print -quit | grep -q .; then
+          # Already-installed is not an error: `dotnet tool install` exits non-zero when
+          # the tool is present, which is the normal case on a self-hosted or cached
+          # runner. Fall through to update, then to "it is already there".
+          dotnet tool install --global dotnet-sonarscanner >/dev/null 2>&1 \
+            || dotnet tool update --global dotnet-sonarscanner >/dev/null 2>&1 \
+            || true
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "using dotnet-sonarscanner"
+          exit 0
+        fi
+
+        base="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli"
+        zip="sonar-scanner-cli-${SCANNER_VERSION}-linux-x64.zip"
+        tmp="$(mktemp -d)"
+        curl -fsSL --retry 3 -o "$tmp/$zip" "$base/$zip"
+        # Verify against SonarSource's published digest rather than a hash pinned in this
+        # file — a hardcoded one goes stale the moment the version input is bumped, and a
+        # stale hash that nobody updates gets deleted rather than fixed.
+        curl -fsSL --retry 3 -o "$tmp/$zip.sha256" "$base/$zip.sha256"
+        expected="$(cut -d' ' -f1 < "$tmp/$zip.sha256")"
+        actual="$(sha256sum "$tmp/$zip" | cut -d' ' -f1)"
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::SonarScanner checksum mismatch (expected $expected, got $actual)"
+          exit 1
+        fi
+        unzip -q "$tmp/$zip" -d "$HOME/.sonar"
+
+        # Locate the bin/ directory by looking at what was actually extracted, rather
+        # than interpolating SCANNER_VERSION into the path. The `case` guard above already
+        # rejects anything but digits and dots, but this removes the consumer-controlled
+        # value from the $GITHUB_PATH line altogether — no taint flow left to reason about,
+        # and it no longer assumes the archive's directory naming.
+        bindir="$(find "$HOME/.sonar" -maxdepth 2 -type d -name bin -print -quit)"
+        if [ -z "$bindir" ]; then
+          echo "::warning::sonar-scanner archive had no bin/ directory; skipping Sonar"
+          exit 0
+        fi
+        printf '%s\n' "$bindir" >> "$GITHUB_PATH"
+        echo "installed sonar-scanner"
+
     - name: Brimyr gate
       id: brimyr
       shell: bash
@@ -186,6 +277,8 @@ runs:
         SONAR_URL_IN: ${{ inputs.sonar_url }}
         SONAR_PROJECT_KEY_IN: ${{ inputs.sonar_project_key }}
         SONAR_ORG_IN: ${{ inputs.sonar_organization }}
+        SONAR_SOURCES_IN: ${{ inputs.sonar_sources }}
+        SONAR_ARGS_IN: ${{ inputs.sonar_args }}
         PR_COMMENT_IN: ${{ inputs.pr_comment }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
@@ -223,6 +316,9 @@ runs:
           args+=(--sonar-url "$SONAR_URL_IN")
           [ -n "$SONAR_PROJECT_KEY_IN" ] && args+=(--sonar-project-key "$SONAR_PROJECT_KEY_IN")
           [ -n "$SONAR_ORG_IN" ] && args+=(--sonar-organization "$SONAR_ORG_IN")
+          [ -n "$SONAR_SOURCES_IN" ] && args+=(--sonar-sources "$SONAR_SOURCES_IN")
+          IFS=',' read -ra _sa <<< "$SONAR_ARGS_IN"
+          for a in "${_sa[@]}"; do [ -n "$a" ] && args+=(--sonar-arg "$a"); done
         fi
 
         if [ "$PR_COMMENT_IN" = "true" ] && [ -n "${PR_NUMBER_IN:-}" ]; then
