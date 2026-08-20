@@ -1,10 +1,29 @@
 # Brimyr gating brimyr — the composite action from this very commit (`uses: ./`),
 # the same way Diatreme releases itself with its own action.
 #
-# Ordering matters: the test deps are installed AFTER actions/setup-python and
-# BEFORE the gate, so `pytest --cov` resolves in the same interpreter the action
-# then uses. The action re-runs setup-python with the same version, which is a
-# cache hit and leaves these installs visible.
+# Both suites are run HERE and handed to the action as pre-made reports
+# (`coverage_file`) instead of letting it auto-detect and run pytest once. This repo
+# is two Python projects, not one: the root pytest config sets `testpaths = ["tests"]`,
+# so a single auto-detected run never imports `broker/app/*`. Files a coverage report
+# never mentions contribute nothing to the patch-coverage denominator (diff-cover
+# behaviour), so a PR touching only the broker — ~1000 lines of security-critical
+# Lambda code — scored a vacuous 100% here. Two reports, merged covered-wins, is what
+# closes that.
+#
+# The broker suite is run from the REPO ROOT (`pytest broker/tests`), NOT from inside
+# `broker/`. coverage.py records paths relative to the CWD, so this writes
+# `broker/app/broker.py` — byte-identical to the git-diff path, an exact match in
+# coverage/patch.py. Running it from `broker/` writes `app/broker.py`, which today
+# still matches through patch.py's suffix fallback but is a trap: merge_reports keys
+# strictly by path string, so the day a `broker/tests/test_report.py` appears, its key
+# `tests/test_report.py` collides with the root's own `tests/test_report.py` and two
+# unrelated files are silently fused, covered-wins. `strip_prefix` is NOT the fix — it
+# peels a prefix OFF coverage paths, and the broker's paths are missing one rather than
+# carrying an extra.
+#
+# Because `coverage_file` is set the action never runs tests itself, so "a broken run
+# is a tool error, not 0% coverage" is enforced by the steps below instead: a failing
+# suite fails its own step and the job is red before the gate computes a percentage.
 name: Coverage
 
 on:
@@ -24,11 +43,32 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0   # patch coverage needs the merge-base
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: '3.12'
-      - name: Install test deps
-        run: python -m pip install --disable-pip-version-check pytest pytest-cov
+      - name: Sync
+        run: uv sync
+      - name: Test the CLI (writes coverage.xml)
+        run: uv run pytest -q --cov --cov-report=xml
+      - name: Test the broker (writes broker/coverage.xml)
+        # `--project broker` uses the broker's own pyproject + lock while leaving the CWD
+        # at the repo root — that CWD is what makes the recorded paths repo-relative (see
+        # the header). pytest still resolves rootdir and configfile from
+        # broker/pyproject.toml, so its `pythonpath = ["."]` and `asyncio_mode = "auto"`
+        # apply and `app` imports exactly as the Lambda runtime resolves it.
+        #
+        # pytest-cov comes in via `--with` rather than by being added to broker's `dev`
+        # extra, so gating a deployable does not churn its lock. Pinned to the same 7.1.0
+        # the root dev group pins, which keeps the PLUGIN identical on both halves — note
+        # it does NOT pin coverage.py itself, which this side resolves freely. That is
+        # tolerable because both halves only ever emit Cobertura `<line number hits>`
+        # facts, which brimyr re-parses itself; nothing depends on the two writers being
+        # the same build. If a coverage.py release ever changes what lands in the XML,
+        # this is where to pin it properly.
+        run: >-
+          uv run --project broker --extra dev --with pytest-cov==7.1.0
+          pytest broker/tests -q --cov --cov-report=xml:broker/coverage.xml
       - name: Brimyr
         uses: ./
         with:
@@ -39,3 +79,6 @@ jobs:
           # and SILENTLY: any problem falls back to the job token, so the comment still
           # posts and only the byline changes. broker-smoke.yml is what notices.
           token_broker_url: https://broker-brimyr.magmamoose.com
+          # The escape hatch, used deliberately: ingest the two reports produced above
+          # rather than re-running one auto-detected suite that cannot see broker/.
+          coverage_file: 'coverage.xml,broker/coverage.xml'

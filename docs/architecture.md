@@ -21,7 +21,9 @@ src/brimyr/
   sonar.py        # sonar-scanner runner (failure-isolated, never raises)
   gate.py         # patch % + threshold -> pass/fail + exit code
   modes.py        # PR (gate) vs baseline (no gate) resolution
-  report.py       # GitHub job summary + step outputs
+  report.py       # GitHub job summary + step outputs (also renders the PR comment)
+  github_comment.py # marker-based upsert of the ONE PR comment (never raises)
+  broker_client.py  # Actions OIDC -> Brimyr[bot] token (fails soft, falls back)
   local.py        # local base resolution for the pre-push check
 ```
 
@@ -31,7 +33,9 @@ src/brimyr/
 coverage report) and returns numbers. `git.py`, `runner.py`, and `sonar.py` are the
 only modules that shell out, and each injects its runner, so the core is unit-tested
 with synthetic diff text and coverage strings — no real repository or toolchain
-required.
+required. The two network edges, `github_comment.py` and `broker_client.py`, follow
+the same shape: stdlib `urllib` only, with the opener injected so the tests need no
+network — and neither ever raises out into the gate.
 
 !!! warning "Keep the boundary"
     Do **not** import `subprocess`, `os`, network code, or GitHub Actions into
@@ -57,9 +61,25 @@ required.
 7. **`sonar.run_scanner`** (optional) ships quality + coverage to SonarQube. It is
    failure-isolated: it never raises, so a Sonar outage can't fail the gate.
 8. **`report`** writes the GitHub job summary and step outputs.
+9. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
+   on the PR as a single marker-owned comment — creating it once, then `PATCH`ing it
+   on every later push. When `token_broker_url` is set,
+   **`broker_client.mint_bot_token`** first exchanges the job's Actions OIDC token
+   for a `Brimyr[bot]` installation token; on any failure it returns `None` and the
+   job's `GITHUB_TOKEN` is used instead. Both are failure-isolated, like Sonar.
 
 Baseline mode skips the gating: it computes coverage against an empty `DiffIndex`,
 ships to Sonar, and never blocks.
+
+## The token broker is not part of the CLI
+
+`broker/` in the repository is a **separate deployable** — the AWS Lambda service
+that mints `Brimyr[bot]` tokens — with its own `pyproject.toml`, lockfile, Ruff
+config and CI job. Nothing under `src/brimyr` imports it; `broker_client.py` talks
+to it over HTTPS like any other remote service, which is what keeps the CLI
+stdlib-only and dependency-free. Its architecture, local LocalStack loop and go-live
+runbook live with the code, in
+[`broker/README.md`](https://github.com/MagmaMoose/brimyr/blob/main/broker/README.md).
 
 ## Exit-code contract
 

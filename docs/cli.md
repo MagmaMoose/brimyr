@@ -55,6 +55,21 @@ Key flags beyond the shared options:
 | `--sonar-sources` | `.` | `sonar.sources` value. |
 | `--sonar-arg` | — | Extra raw `sonar-scanner` arg, e.g. `-Dsonar.foo=bar` (repeatable). |
 
+### PR comment flags
+
+Also accepted by `brimyr local`, though they only do anything when there is a PR to
+comment on and a token to comment with. All of them are non-blocking: nothing here
+can change the exit code. See [PR comment](pr-comment.md) for the full behaviour.
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--pr-comment` | off | Post/update the single patch-coverage comment on the PR. |
+| `--pr-number` | from the event | PR number (read from `$GITHUB_EVENT_PATH` otherwise). |
+| `--repo-slug` | `$GITHUB_REPOSITORY` | `owner/repo` being commented on. |
+| `--github-token-env` | `GITHUB_TOKEN` | Env var holding the comment token; needs `pull-requests: write`. |
+| `--token-broker-url` | — | Broker base URL. Authors as `Brimyr[bot]`; falls back **silently** to the token above on any failure. Needs `id-token: write`. |
+| `--github-api-url` | `$GITHUB_API_URL`, else `api.github.com` | GitHub API base (GitHub Enterprise). |
+
 ## `brimyr local`
 
 Run the patch-coverage gate against a **locally inferred** base (the repo's default

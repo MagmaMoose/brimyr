@@ -77,12 +77,27 @@ issuer pinning is exactly the control that stops anyone holding any valid Action
 token from minting. A local run that cannot fake it is the correct trade.
 
 Also unproven locally: the stage throttle (LocalStack accepts but does not enforce it)
-and `disable_execute_api_endpoint`. Verify both after the first real apply.
+and `disable_execute_api_endpoint`. Both are checked against real AWS instead — the
+`execute_api_endpoint` 403 curl in the runbook's step 5 is the only proof the custom
+domain is the sole door.
 
-## Going live
+## Where production lives
 
-The identity now exists. What is recorded here is non-secret; the private key is not, and
-never will be, in this repo.
+Not in this repo. `magmamoose/infra` grew an account dimension — `terraform/aws/<account>/
+<env>/<region>/<stack>` — so the leaves live there and sit under an account path:
+
+| Leaf in `magmamoose/infra` | What it owns |
+|---|---|
+| `terraform/aws/brimyr/prod/eu-west-1/artifacts` | the artifact bucket and the OIDC publish role |
+| `terraform/aws/brimyr/prod/eu-west-1/brimyr-broker` | the Lambda, the HTTP API, the ACM certificate, the alarms, the budget |
+| `terraform/cloudflare/dns-magmamoose/prod` | the grey ACM validation CNAME and the orange service CNAME |
+
+Neither AWS leaf is listed in that repo's `atlantis.yaml` (which only carries the older
+account-less `terraform/aws/prod/...` projects), so **their applies are run by hand** with
+terragrunt under the `mm-prd-brimyr` SSO profile.
+
+What is recorded here is non-secret; the private key is not, and never will be, in this
+repo.
 
 | | |
 |---|---|
@@ -93,6 +108,78 @@ never will be, in this repo.
 | App private key | **not in this repo.** 2048-bit PKCS#1, `MD5(DER) = 67:b3:e5:7b:90:4e:b1:fd:01:d8:1f:b3:7f:67:fb:7b` — compare against the App settings page before seeding |
 | SSM path | `/brimyr/prod` → `app-id`, `private-key`, both `SecureString` |
 | Hostname | `broker-brimyr.magmamoose.com` (first-level, so Cloudflare can proxy it) |
+| Artifact bucket | `brimyr-artifacts-202518311296`, prefix `broker/` |
+| Publish role | `arn:aws:iam::202518311296:role/brimyr-artifact-publisher` |
+
+## Shipping a change
+
+Three steps, and **only the middle one is automatic**.
+
+### 1. Merge it
+
+Nothing deploys on merge. `broker/app/**` is NOT covered by the root test suite — root
+`pyproject.toml` sets `testpaths = ["tests"]`, so a plain `uv run pytest` never imports
+it. It is covered by the dedicated `broker` job in `ci.yml` (its own ruff, its own
+pytest, plus a zip build), and by the patch-coverage gate because `coverage.yml` runs
+both suites and hands brimyr both reports.
+
+### 2. The release publishes the zip — automatically
+
+`.github/workflows/broker-publish.yml` runs on `release: published` (and by
+`workflow_dispatch` with a tag, from `main` or a tag — the publish role's trust policy
+allows `refs/heads/main` and `refs/tags/*` for `MagmaMoose/brimyr` and nothing else). It
+builds `broker/scripts/build_lambda_zip.py --platform x86_64-manylinux_2_28` from the
+tagged tree and uploads it to:
+
+```
+s3://brimyr-artifacts-202518311296/broker/<version>.zip     # version = tag without the v
+```
+
+It **refuses to overwrite an existing key** and goes red instead: the infra leaf deploys
+by pinning that key, so replacing its bytes would swap the running code under a version
+somebody already reviewed — and Terraform would not even notice, because the key it
+watches did not change. Prereleases and anything that is not a plain `vX.Y.Z` are skipped
+with a notice rather than guessed at.
+
+The job summary prints the object's **sha256**, so an apply can be tied to exact bytes,
+plus whether anything under `broker/app/`, `broker/uv.lock` or the build script actually
+changed since the previous release. Most brimyr releases are CLI-only; the build is
+byte-reproducible, so those produce an artifact identical in content to the last one and
+are not worth deploying.
+
+This replaced a hand-run `aws s3 cp`. The one object that predates it —
+`broker/1.2.0.zip`, uploaded by hand to get the stack live — carries no SHA256 checksum,
+which is why the overwrite check reports "cannot tell" rather than a comparison for that
+one key.
+
+> `BROKER_ARTIFACT_BUCKET` and `BROKER_PUBLISH_ROLE_ARN` are **not set** as repository
+> variables today (`gh variable list -R MagmaMoose/brimyr` is empty), so the workflow uses
+> the literals above. Setting them changes nothing; it just moves the values out of the
+> file. The workflow deliberately does **not** skip when they are unset — chargate's copy
+> does, because there an unset variable means the artifacts stack was never applied, but
+> here it is applied and a silent skip is the worst available outcome in a service that
+> already fails soft.
+
+### 3. Deploy it — this is the human step
+
+Publishing is not deploying. In `magmamoose/infra`:
+
+```hcl
+# terraform/aws/brimyr/prod/eu-west-1/brimyr-broker/terragrunt.hcl
+broker_artifact_version = "<version>"   # THIS LINE IS THE DEPLOYMENT
+```
+
+Objects are immutable and keys are version-scoped, so a changed key is the only signal
+Terraform needs — and it must name an object that **already exists**. Then apply the leaf
+by hand (`AWS_PROFILE=mm-prd-brimyr terragrunt apply`) and re-run the smoke workflow.
+
+It is deliberately manual: this repo releases on every conventional commit to `main`, and
+an auto-deploy would push a new Lambda for every CLI-only patch release, several times a
+week, into the one component whose breakage is invisible.
+
+## The runbook — rebuilding from scratch
+
+Already done for the live stack. Kept because a rebuild has to walk it again in order.
 
 ### 1. Sign in
 
@@ -129,11 +216,30 @@ aws ssm get-parameters-by-path --profile mm-prd-brimyr --region eu-west-1 \
 leaves `allowed_repositories` empty on purpose, so a repo the App is not installed on gets
 `app_not_installed` rather than a token.
 
-### 4. Apply
+### 4. Apply, in this order
 
-`broker/terraform/prod/eu-west-1/token-broker/` instantiates the module for real. It
-carries an `allowed_account_ids` guard, so an apply under the wrong profile fails before
-creating anything.
+Cold-start ordering, and it is not optional — the broker leaf reads an object that has to
+exist first:
+
+1. apply `terraform/aws/brimyr/prod/eu-west-1/artifacts` (bucket + publish role);
+2. let one release run `broker-publish.yml`, or upload a zip by hand for the very first
+   one;
+3. apply `terraform/aws/brimyr/prod/eu-west-1/brimyr-broker` with `broker_artifact_version`
+   set to what step 2 produced.
+
+The certificate is two-phase and both DNS records live in
+`terraform/cloudflare/dns-magmamoose/prod`: phase 1 leaves `enable_custom_domain = false`
+and adds the validation CNAME **grey (`proxied = false`)** — a proxied validation record
+answers with Cloudflare's own value, ACM never sees the token, and the certificate sits in
+`PENDING_VALIDATION` forever. Phase 2, once it is ISSUED, sets `enable_custom_domain` and
+`disable_default_endpoint` true and adds the **orange** service CNAME pointing at the
+leaf's `target_domain_name` output (a `d-xxxx.execute-api.eu-west-1.amazonaws.com` name).
+Never at the plain execute-api hostname: it serves a certificate for
+`*.execute-api.eu-west-1.amazonaws.com` and fails the handshake for this name, and it is
+disabled on purpose anyway.
+
+Every leaf carries `allowed_account_ids`, so an apply under the wrong profile fails while
+the provider is being configured — before anything is planned.
 
 ### 5. Then verify, in this order
 
@@ -145,18 +251,22 @@ creating anything.
 2. `GET https://broker-brimyr.magmamoose.com/healthz` → 200.
 3. `GET https://broker-brimyr.magmamoose.com/readyz` → 200. A 503 means the SSM
    parameters, the IAM statement or the KMS grant are wrong.
-4. Run `.github/workflows/broker-smoke.yml` by hand. It is the only thing that ever
+4. The throttle, which LocalStack also could not prove:
+   `for i in $(seq 40); do curl -so /dev/null -w '%{http_code} ' .../healthz; done` — 429s
+   appear once the stage rate limit is passed. It is the only real spend cap on a public
+   unauthenticated endpoint.
+5. Run `.github/workflows/broker-smoke.yml` by hand. It is the only thing that ever
    notices this breaking — see below.
-5. Set `token_broker_url` on the action and confirm a PR comment is authored by
+6. Set `token_broker_url` on the action and confirm a PR comment is authored by
    `Brimyr[bot]`. The calling job needs `permissions: id-token: write`.
 
-### Why the smoke workflow is not optional
+## Why the smoke workflow is not optional
 
 `brimyr.broker_client` fails **soft and silent**: a broken broker means the byline quietly
 reverts to `github-actions[bot]`. No check goes red, no comment is lost, nobody notices.
 The weekly smoke run is the entire detection mechanism.
 
-### Still outstanding
+## Still outstanding
 
 - The ACM certificate for `broker-brimyr.magmamoose.com` is issued out of band; the leaf
   takes its ARN as a variable rather than inventing one. It must be an **eu-west-1**
@@ -171,3 +281,24 @@ The weekly smoke run is the entire detection mechanism.
 - `magmamoose/infra` still has no account dimension — every leaf sits under
   `terraform/aws/prod/eu-west-1/` with one ambient credential. Until that lands this leaf
   lives here, and moving it is the eventual tidy-up.
+
+## What in this directory is superseded
+
+`broker/terraform/prod/eu-west-1/token-broker/` predates the move to `magmamoose/infra`
+and deploys from a **local zip path**, not the published S3 object, so it cannot be what
+is running. It is superseded.
+
+`broker/terraform/modules/token-broker/` underneath it is still live and load-bearing —
+the LocalStack harness instantiates it. Removing the prod leaf is a separate tidy-up; do
+not assume either directory is dead without checking which one the live stack uses.
+
+## Publishing a new broker version
+
+`.github/workflows/broker-publish.yml` builds the zip on every stable release and uploads
+it to `s3://<artifact-bucket>/broker/<version>.zip`, assuming the publish role through
+GitHub OIDC — no long-lived credential exists. Before this, that upload was done by hand.
+
+Publishing is **not** deploying. Objects are immutable and version-scoped, so the Lambda
+does not change until someone bumps `broker_artifact_version` in the infra leaf and
+applies. That is deliberate: the version string in Terraform is the deployment signal, and
+a release that quietly redeployed a public token minter would be worse than one that waits.

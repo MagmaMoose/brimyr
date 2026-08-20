@@ -43,6 +43,15 @@ See [Setup & usage](setup.md) to wire one up, [Architecture](architecture.md) fo
 how it fits together, and [Patch coverage](patch-coverage.md) for the precise
 classification rules.
 
+## The PR comment
+
+Opt in with `pr_comment` and the verdict lands on the pull request as **one**
+comment, updated in place on every push rather than stacked — the number, the
+threshold, and the changed lines the tests never executed. Set `token_broker_url`
+as well and it is authored by **Brimyr[bot]** rather than the shared
+`github-actions[bot]`. Neither can fail the gate: a comment is a convenience, and a
+convenience must never turn a green PR red. See [PR comment](pr-comment.md).
+
 ## Modes
 
 - **PR events** → run tests → patch-coverage gate → ship to SonarQube.

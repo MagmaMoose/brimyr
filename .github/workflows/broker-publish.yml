@@ -1,0 +1,314 @@
+# Publish the broker Lambda zip to S3 on every stable release — version-scoped, immutable.
+#
+# THE GAP THIS CLOSES. `magmamoose/infra`'s
+# `terraform/aws/brimyr/prod/eu-west-1/brimyr-broker` leaf deploys the function from
+# `s3://<artifact bucket>/broker/<version>.zip` and names the version in
+# `broker_artifact_version`. That line IS the deployment — objects are immutable and keys
+# are version-scoped, so a changed key is the only signal Terraform needs. Nothing
+# published the object it points at: the live one was uploaded by hand with `aws s3 cp` to
+# get the stack up, which meant the broker could not be updated by a release at all and
+# the artifacts leaf (bucket + OIDC publish role) existed for nothing.
+#
+# WHY THIS IS ITS OWN FILE AND NOT A STEP IN release.yml. `.github/workflows/release.yml`
+# is provisioned by caldrith from MagmaMoose/admin WITHOUT `create_only`, so it is
+# overwritten in place on the next sync: publish wiring added there survives until then
+# and then vanishes, taking the deployment path with it and leaving no trace in any pull
+# request. `major-tag.yml` is a repo-owned workflow reacting to a release for exactly the
+# same reason, and this file mirrors its shape.
+#
+# WHAT THIS DOES NOT DO: deploy. Publishing an artifact and running it are deliberately
+# two decisions — see the job summary, which prints the one line a human then bumps.
+name: Publish broker artifact
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish the broker zip for, e.g. v1.2.1'
+        required: true
+
+permissions:
+  contents: read     # check out the release tag; nothing is written back to the repo
+  id-token: write    # mint the Actions OIDC token STS exchanges for the publish role
+
+concurrency:
+  # One publish at a time. The key is immutable and the upload below refuses to overwrite,
+  # so a race cannot corrupt anything — but the loser would go red with "already
+  # published", which reads exactly like the real failure that refusal exists to catch.
+  group: publish-broker
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # A vendored wheel build plus one ~5 MB PutObject. Past ten minutes something is hung,
+    # not slow.
+    timeout-minutes: 10
+    env:
+      # Repository variables first, with the applied values as the fallback. Both are
+      # outputs of `magmamoose/infra`'s `terraform/aws/brimyr/prod/eu-west-1/artifacts`
+      # leaf: the bucket is `<name_prefix>-artifacts-<account id>` and the role is
+      # `<name_prefix>-artifact-publisher`, with name_prefix = "brimyr" in account
+      # 202518311296.
+      #
+      # chargate's copy of this workflow SKIPS when the variables are unset, because there
+      # an unset variable means the artifacts stack has not been applied yet. Here it is
+      # applied and minting, so an unset variable would mean somebody deleted a repo
+      # variable — and a silent skip is the worst possible response in this repo, where the
+      # broker already fails soft and a missing artifact would surface as nothing at all.
+      # Falling back to the literal keeps a release publishing; the variables stay so the
+      # values can be moved without a code change.
+      BUCKET: ${{ vars.BROKER_ARTIFACT_BUCKET || 'brimyr-artifacts-202518311296' }}
+      ROLE_ARN: ${{ vars.BROKER_PUBLISH_ROLE_ARN || 'arn:aws:iam::202518311296:role/brimyr-artifact-publisher' }}
+    steps:
+      - name: Resolve the release tag
+        id: plan
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease || false }}
+        run: |
+          set -euo pipefail
+
+          # A prerelease is not something anyone deploys, and publishing one would burn a
+          # version-scoped key that the stable release of the same number could then never
+          # claim — the upload refuses to overwrite, by design.
+          if [ "${IS_PRERELEASE}" = "true" ]; then
+            echo "::notice::${RELEASE_TAG} is a prerelease — not publishing a broker artifact."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # vX.Y.Z and nothing else. `broker_artifact_version` in the infra leaf is the bare
+          # X.Y.Z, so anything whose shape is not that — a package-scoped tag, a `-rc1`
+          # dispatched by hand (which carries no `prerelease` flag to catch it above) — has
+          # no unambiguous key and is skipped rather than guessed at. Same rule, same
+          # reason, as major-tag.yml.
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${RELEASE_TAG} is not a plain vX.Y.Z tag — nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "publish=true"
+            echo "tag=${RELEASE_TAG}"
+            echo "version=${RELEASE_TAG#v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        if: steps.plan.outputs.publish == 'true'
+        with:
+          # The RELEASE tag, not the trigger's ref. A `workflow_dispatch` runs from the
+          # branch it was launched on, so without this a manual publish of v1.2.1 would
+          # package whatever main's tree looks like now and store it under a key that
+          # claims to be v1.2.1.
+          ref: ${{ steps.plan.outputs.tag }}
+          # Full history and tags: the "did anything shipped actually change" note below
+          # resolves the previous release with `git describe`, which finds nothing on the
+          # default shallow clone and would report every release as a change.
+          fetch-depth: 0
+
+      - name: Install uv
+        if: steps.plan.outputs.publish == 'true'
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Build the Lambda zip
+        id: build
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        working-directory: broker
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          # Absolute (`runner.temp`), because this step runs from broker/ and the upload
+          # step does not. `runner` is not available in a job-level `env:`, which is why
+          # both steps name it.
+          ZIP_PATH: ${{ runner.temp }}/brimyr-broker.zip
+        run: |
+          set -euo pipefail
+
+          # --platform IS REQUIRED AND HAS NO DEFAULT, on purpose: `cryptography` ships
+          # compiled wheels, so a runner-native build would upload cleanly and then
+          # ImportError on the Lambda's first cold start — a failure that surfaces only as
+          # the broker being silently dead. x86_64-manylinux_2_28 is what the module's
+          # default (x86_64) function architecture runs.
+          #
+          # `uv run` without `--extra dev`, unlike `make -C broker zip`: the shipped set
+          # comes from `uv export --frozen --no-dev` inside the script, so the dev extra
+          # cannot change a byte of the output, and pytest/boto3 are dead weight here.
+          uv run python scripts/build_lambda_zip.py \
+            --out "${ZIP_PATH}" --platform x86_64-manylinux_2_28
+
+          # Read off the written file rather than captured from the build's stdout, so
+          # nothing the build tooling prints can end up in the recorded digest.
+          {
+            echo "sha256=$(sha256sum "${ZIP_PATH}" | cut -d' ' -f1)"
+            echo "size=$(stat -c%s "${ZIP_PATH}")"
+          } >> "$GITHUB_OUTPUT"
+
+          # ADVISORY ONLY — it never blocks the publish. Most brimyr releases are CLI
+          # changes that touch nothing under broker/, and the build is byte-reproducible,
+          # so the artifact they produce is identical in content to the previous release's.
+          # Knowing that is the difference between a leaf bump worth applying and one that
+          # redeploys the same code. `--changed-since` still requires `--platform` (it is a
+          # required argument, parsed before the query short-circuits), and `git describe`
+          # from the tag's parent names the release before this one.
+          previous="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          changed=unknown
+          if [ -n "${previous}" ]; then
+            changed="$(uv run python scripts/build_lambda_zip.py \
+              --platform x86_64-manylinux_2_28 --changed-since "${previous}" || echo unknown)"
+          fi
+          {
+            echo "previous=${previous:-none}"
+            echo "changed=${changed}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        if: steps.plan.outputs.publish == 'true'
+        # The role's trust policy allows the `sub` claims
+        # `repo:MagmaMoose/brimyr:ref:refs/heads/main` and `...:ref:refs/tags/*` and
+        # NOTHING ELSE, so this job has to run from main or from a tag: a release publish
+        # carries the release's tag ref, and a manual dispatch carries the ref it was
+        # launched from. Dispatching this from a feature branch fails here at AssumeRole
+        # with a `sub` the trust policy does not match — that is the check working, not a
+        # broken workflow. eu-west-1 because the bucket, the role and the broker are all
+        # in eu-west-1 in account 202518311296.
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: Upload, refusing to overwrite
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          SHA256: ${{ steps.build.outputs.sha256 }}
+          SIZE: ${{ steps.build.outputs.size }}
+          PREVIOUS: ${{ steps.build.outputs.previous }}
+          CHANGED: ${{ steps.build.outputs.changed }}
+          ZIP_PATH: ${{ runner.temp }}/brimyr-broker.zip
+        run: |
+          set -euo pipefail
+          key="broker/${VERSION}.zip"
+
+          # IMMUTABLE BY REFUSAL, AND LOUD ABOUT IT. The infra leaf pins this exact key, so
+          # replacing its bytes swaps the code running in production under a version
+          # somebody already reviewed and applied, with no diff anywhere to show it
+          # happened — and Terraform would not even redeploy, because the key it watches
+          # did not change.
+          #
+          # The role needs s3:ListBucket as well as s3:GetObject for this check: without
+          # ListBucket, S3 answers a HEAD on a MISSING key with 403 rather than 404,
+          # because it will not confirm non-existence to a caller who cannot list. The
+          # first publish into a prefix hits exactly that — and a 403 read as "absent"
+          # would walk straight into the overwrite this refuses to do, so anything that is
+          # not a clean 404 stops the run.
+          # The publish role can do this — verified against the live policy, which grants
+          # s3:GetObject + s3:GetObjectAttributes on broker/* and s3:ListBucket on the
+          # bucket, alongside s3:PutObject. A publish-ONLY role could not, and this guard
+          # would then fail closed on an AccessDenied rather than silently overwriting,
+          # which is the right way round but worth knowing before trimming the policy.
+          err="$(mktemp)"
+          if existing="$(aws s3api head-object --bucket "${BUCKET}" --key "${key}" \
+                          --checksum-mode ENABLED 2>"${err}")"; then
+            # ChecksumSHA256 is base64 and is only stored when the object was PUT with
+            # --checksum-algorithm SHA256, as below. Objects uploaded by hand before this
+            # workflow existed carry none, so this says "unknown" rather than guessing.
+            remote_b64="$(printf '%s' "${existing}" | jq -r '.ChecksumSHA256 // empty' 2>/dev/null || true)"
+            local_b64="$(openssl dgst -sha256 -binary "${ZIP_PATH}" | base64 || true)"
+            if [ -z "${remote_b64}" ]; then
+              verdict='it carries no SHA256 checksum (uploaded by hand, before this workflow existed), so whether it matches this build cannot be told from here'
+            elif [ "${remote_b64}" = "${local_b64}" ]; then
+              # SUCCESS, not a failure. The object already there IS this build, so the
+              # desired end state holds and re-running (a re-published release, a manual
+              # dispatch of the same tag) must be idempotent. Failing here would have made
+              # the workflow contradict its own verdict — it said "nothing needs doing"
+              # and then went red.
+              printf '::notice::s3://%s/%s already exists with identical bytes — nothing to do.\n' \
+                "${BUCKET}" "${key}"
+              {
+                echo "### Broker artifact already published"
+                echo
+                echo "\`s3://${BUCKET}/${key}\` already holds these exact bytes (\`${local_b64}\`)."
+                echo "Nothing to do — this is a replay, not a conflict."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            else
+              verdict='its bytes DIFFER from this build — one version number now describes two different artifacts, which is the case this refusal exists for'
+            fi
+            printf '::error::s3://%s/%s already exists and will NOT be overwritten: %s\n' \
+              "${BUCKET}" "${key}" "${verdict}"
+            {
+              echo "### Broker artifact NOT published"
+              echo
+              echo "\`s3://${BUCKET}/${key}\` already exists — ${verdict}."
+              echo
+              echo "Artifacts are immutable because the infra leaf deploys by pinning this key."
+              echo "To ship different bytes, cut a new version; do not replace this object."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if ! grep -q '(404)' "${err}"; then
+            printf '::error::HeadObject on s3://%s/%s failed with something other than a 404, so whether the object exists is unknown — refusing to publish over it.\n' \
+              "${BUCKET}" "${key}"
+            cat "${err}"
+            exit 1
+          fi
+          rm -f "${err}"
+
+          # NOTHING SHIPPED CHANGED -> DO NOT UPLOAD. `--changed-since` compares the
+          # inputs the zip is actually built from (app/, pyproject, uv.lock) against the
+          # previous release, and most releases here are CLI-only. Uploading a byte-
+          # identical ~5 MB object under a new key would add storage that is never
+          # deleted — current versions have no expiry, because a rollback target that
+          # expired is not a rollback target — for an artifact that is already present
+          # under the previous version's key. This bill is paid personally; skipping is
+          # both cheaper and more honest, because the leaf should keep pointing at the
+          # version whose bytes it is actually running.
+          if [ "${CHANGED}" = "false" ]; then
+            printf '::notice::No shipped broker input changed since %s — not publishing a duplicate artifact.\n' \
+              "${PREVIOUS}"
+            {
+              echo "### Broker artifact not published (nothing changed)"
+              echo
+              echo "No file the zip is built from changed since \`${PREVIOUS}\`, so this"
+              echo "release's bytes are identical to that one's."
+              echo
+              echo "Keep \`broker_artifact_version\` in the infra leaf on **\`${PREVIOUS#v}\`** —"
+              echo "that object exists and is what is running. Bumping it to this version"
+              echo "would point at a key that was deliberately not created."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          aws s3api put-object \
+            --bucket "${BUCKET}" \
+            --key "${key}" \
+            --body "${ZIP_PATH}" \
+            --checksum-algorithm SHA256 >/dev/null
+
+          {
+            echo "### Broker artifact published"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| object | \`s3://${BUCKET}/${key}\` |"
+            echo "| sha256 | \`${SHA256}\` |"
+            echo "| size | ${SIZE} bytes |"
+            echo "| shipped inputs changed since \`${PREVIOUS}\` | \`${CHANGED}\` |"
+            echo
+            echo "**Publishing is not deploying.** The running broker does not change until"
+            echo "this line is bumped in \`magmamoose/infra\` and applied:"
+            echo
+            echo '```hcl'
+            echo '# terraform/aws/brimyr/prod/eu-west-1/brimyr-broker/terragrunt.hcl'
+            echo "broker_artifact_version = \"${VERSION}\""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-19T14:47:46Z",
-  "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added — pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py) shell out and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook.",
+  "generated": "2026-08-20T00:00:00Z",
+  "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
     "src/brimyr/cli.py:cmd_ci",
@@ -9,152 +9,477 @@
     "src/brimyr/cli.py:_run_flow",
     "action.yml:runs",
     ".github/workflows/gate.yml:jobs.brimyr",
-    ".pre-commit-hooks.yaml:brimyr"
+    ".pre-commit-hooks.yaml:brimyr",
+    "broker/app/lambda_handler.py:handler"
   ],
   "modules": {
     "cli": {
       "path": "src/brimyr/cli.py",
-      "purpose": "argparse dispatch (coverage | ci | local | version) plus _run_flow — the single pipeline every surface executes: collect coverage -> compute the diff -> patch coverage -> gate -> summary/outputs.",
-      "exports": ["main", "build_parser", "cmd_coverage", "cmd_ci", "cmd_local", "cmd_version", "counts_to_dict"],
-      "depends_on": ["git", "report", "sonar", "coverage.diff", "coverage.model", "coverage.patch", "detect", "gate", "local", "modes", "runner"]
+      "purpose": "argparse dispatch (coverage | ci | local | version) plus _run_flow \u2014 the single pipeline every surface executes: collect coverage -> compute the diff -> patch coverage -> gate -> summary/outputs -> optional PR comment.",
+      "exports": [
+        "main",
+        "build_parser",
+        "cmd_coverage",
+        "cmd_ci",
+        "cmd_local",
+        "cmd_version",
+        "counts_to_dict"
+      ],
+      "depends_on": [
+        "broker_client",
+        "git",
+        "github_comment",
+        "report",
+        "sonar",
+        "coverage.diff",
+        "coverage.model",
+        "coverage.patch",
+        "detect",
+        "gate",
+        "local",
+        "modes",
+        "runner"
+      ]
     },
     "coverage.diff": {
       "path": "src/brimyr/coverage/diff.py",
       "purpose": "Pure unified-diff parser: diff text -> DiffIndex of changed files and added line ranges. Also owns path normalisation (a/ b/ prefix stripping, separators), used repo-wide.",
-      "exports": ["parse_unified_diff", "DiffIndex", "FileDiff", "normalize_path"],
+      "exports": [
+        "parse_unified_diff",
+        "DiffIndex",
+        "FileDiff",
+        "normalize_path"
+      ],
       "depends_on": []
     },
     "coverage.model": {
       "path": "src/brimyr/coverage/model.py",
       "purpose": "Coverage data model. CoverageBuilder accumulates per-line hit counts with max-wins semantics (covered by any test => covered); merge_reports folds multi-ecosystem runs into one report.",
-      "exports": ["CoverageReport", "FileCoverage", "CoverageBuilder", "merge_reports"],
-      "depends_on": ["coverage.diff"]
+      "exports": [
+        "CoverageReport",
+        "FileCoverage",
+        "CoverageBuilder",
+        "merge_reports"
+      ],
+      "depends_on": [
+        "coverage.diff"
+      ]
     },
     "coverage.lcov": {
       "path": "src/brimyr/coverage/lcov.py",
       "purpose": "lcov .info text -> CoverageReport. Hand-rolled DA-record parser, no third-party dependency.",
-      "exports": ["parse_lcov"],
-      "depends_on": ["coverage.model"]
+      "exports": [
+        "parse_lcov"
+      ],
+      "depends_on": [
+        "coverage.model"
+      ]
     },
     "coverage.cobertura": {
       "path": "src/brimyr/coverage/cobertura.py",
       "purpose": "Cobertura XML -> CoverageReport via xml.etree; raises CoberturaError on malformed input so the caller can mark the run broken.",
-      "exports": ["parse_cobertura", "CoberturaError"],
-      "depends_on": ["coverage.model"]
+      "exports": [
+        "parse_cobertura",
+        "CoberturaError"
+      ],
+      "depends_on": [
+        "coverage.model"
+      ]
     },
     "coverage.patch": {
       "path": "src/brimyr/coverage/patch.py",
       "purpose": "THE GATE'S HEART. Intersects a DiffIndex with a CoverageReport: added lines AND executable lines -> covered/missing per file, plus the overall percentage. Path matching goes exact -> prefix-stripped -> suffix in either direction (PatchPolicy).",
-      "exports": ["compute_patch_coverage", "PatchCoverage", "PatchPolicy", "PatchFileResult"],
-      "depends_on": ["coverage.diff", "coverage.model"]
+      "exports": [
+        "compute_patch_coverage",
+        "PatchCoverage",
+        "PatchPolicy",
+        "PatchFileResult"
+      ],
+      "depends_on": [
+        "coverage.diff",
+        "coverage.model"
+      ]
     },
     "git": {
       "path": "src/brimyr/git.py",
       "purpose": "The ONLY git/subprocess boundary for history: merge-base resolution, diff text, shallow-clone detection. compute_changed_lines returns a ready DiffIndex.",
-      "exports": ["compute_changed_lines", "merge_base", "diff_text", "is_shallow", "GitError", "MergeBaseError", "ShallowCloneError"],
-      "depends_on": ["coverage.diff"]
+      "exports": [
+        "compute_changed_lines",
+        "merge_base",
+        "diff_text",
+        "is_shallow",
+        "GitError",
+        "MergeBaseError",
+        "ShallowCloneError"
+      ],
+      "depends_on": [
+        "coverage.diff"
+      ]
     },
     "detect": {
       "path": "src/brimyr/detect.py",
       "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report.",
-      "exports": ["detect_ecosystems", "ecosystem", "locate_coverage_file", "Ecosystem", "CoverageFormat", "ECOSYSTEMS"],
+      "exports": [
+        "detect_ecosystems",
+        "ecosystem",
+        "locate_coverage_file",
+        "Ecosystem",
+        "CoverageFormat",
+        "ECOSYSTEMS"
+      ],
       "depends_on": []
     },
     "runner": {
       "path": "src/brimyr/runner.py",
-      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken — never a 0% score. Injectable Runner for tests.",
-      "exports": ["run_tests", "run_one", "ingest_file", "parse_coverage_text", "RunResult", "RunOutcome", "IngestError"],
-      "depends_on": ["coverage.cobertura", "coverage.lcov", "coverage.model", "detect"]
+      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken \u2014 never a 0% score. Injectable Runner for tests.",
+      "exports": [
+        "run_tests",
+        "run_one",
+        "ingest_file",
+        "parse_coverage_text",
+        "RunResult",
+        "RunOutcome",
+        "IngestError"
+      ],
+      "depends_on": [
+        "coverage.cobertura",
+        "coverage.lcov",
+        "coverage.model",
+        "detect"
+      ]
     },
     "sonar": {
       "path": "src/brimyr/sonar.py",
       "purpose": "Builds sonar-scanner -D arguments from a SonarConfig and runs it, failure-isolated: it never raises and never changes the gate verdict, it only returns a SonarResult message for the summary.",
-      "exports": ["run_scanner", "build_scanner_args", "SonarConfig", "SonarResult"],
+      "exports": [
+        "run_scanner",
+        "build_scanner_args",
+        "SonarConfig",
+        "SonarResult"
+      ],
+      "depends_on": []
+    },
+    "github_comment": {
+      "path": "src/brimyr/github_comment.py",
+      "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
+      "exports": [
+        "post_pr_comment",
+        "CommentConfig",
+        "CommentResult",
+        "SUMMARY_MARKER"
+      ],
+      "depends_on": []
+    },
+    "broker_client": {
+      "path": "src/brimyr/broker_client.py",
+      "purpose": "The asking half of the token broker: requests the job's Actions OIDC token (aud=brimyr, needs `permissions: id-token: write`) and exchanges it at the broker for a repo-scoped Brimyr[bot] installation token. FAILS SOFT AND SILENTLY \u2014 every failure returns token=None and the caller falls back to GITHUB_TOKEN, so only the byline changes; that silence is why .github/workflows/broker-smoke.yml is not optional. Failure messages only ever echo the broker's fixed error vocabulary, never an exception's text, because a transport error carries the request URL and the OIDC token travels in that request's body. Stdlib urllib, injectable opener.",
+      "exports": [
+        "mint_bot_token",
+        "request_actions_oidc_token",
+        "BrokerResult",
+        "OIDC_AUDIENCE"
+      ],
       "depends_on": []
     },
     "gate": {
       "path": "src/brimyr/gate.py",
       "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, and the vacuous pass when nothing coverable changed.",
-      "exports": ["decide_gate", "GateDecision", "DEFAULT_THRESHOLD", "EXIT_OK", "EXIT_BLOCKED", "EXIT_ERROR"],
-      "depends_on": ["coverage.patch"]
+      "exports": [
+        "decide_gate",
+        "GateDecision",
+        "DEFAULT_THRESHOLD",
+        "EXIT_OK",
+        "EXIT_BLOCKED",
+        "EXIT_ERROR"
+      ],
+      "depends_on": [
+        "coverage.patch"
+      ]
     },
     "modes": {
       "path": "src/brimyr/modes.py",
       "purpose": "Mode.PR (gates) vs Mode.BASELINE (report-only), resolved from an explicit --mode or GITHUB_EVENT_NAME. Mode.gates is the single switch the flow reads.",
-      "exports": ["Mode", "resolve_mode"],
+      "exports": [
+        "Mode",
+        "resolve_mode"
+      ],
       "depends_on": []
     },
     "report": {
       "path": "src/brimyr/report.py",
-      "purpose": "Renders the Markdown job summary (verdict, percentage, per-file misses, ecosystems, Sonar note) and writes GITHUB_STEP_SUMMARY / GITHUB_OUTPUT. No-ops cleanly off CI.",
-      "exports": ["render_summary", "append_step_summary", "write_outputs"],
-      "depends_on": ["detect", "gate", "modes"]
+      "purpose": "Renders the Markdown summary (verdict, percentage, per-file misses, ecosystems, Sonar note) and writes GITHUB_STEP_SUMMARY / GITHUB_OUTPUT. That same Markdown is reused verbatim as the PR comment body, so there is one renderer and the two can never disagree. No-ops cleanly off CI.",
+      "exports": [
+        "render_summary",
+        "append_step_summary",
+        "write_outputs"
+      ],
+      "depends_on": [
+        "detect",
+        "gate",
+        "modes"
+      ]
     },
     "local": {
       "path": "src/brimyr/local.py",
       "purpose": "Infers the base ref for the pre-push hook (explicit -> upstream -> origin/HEAD -> default branch), returning None when it cannot, so the CLI can ask for --base.",
-      "exports": ["resolve_local_base"],
+      "exports": [
+        "resolve_local_base"
+      ],
       "depends_on": []
     },
     "surface.action": {
       "path": "action.yml",
-      "purpose": "Composite GitHub Action wrapping `brimyr ci`: inputs mirror the CLI flags (mode, threshold, ecosystem, sonar-*), outputs mirror the gate outputs.",
-      "exports": ["inputs", "outputs", "runs.steps"],
-      "depends_on": ["cli"]
+      "purpose": "Composite GitHub Action wrapping `brimyr ci`: inputs mirror the CLI flags (mode, threshold, ecosystem, sonar-*, pr_comment, github_token, token_broker_url), outputs mirror the gate outputs.",
+      "exports": [
+        "inputs",
+        "outputs",
+        "runs.steps"
+      ],
+      "depends_on": [
+        "cli"
+      ]
     },
     "surface.workflow": {
       "path": ".github/workflows/gate.yml",
-      "purpose": "Reusable workflow (workflow_call) that checks out with enough history, sets up the toolchain, fetches the action, and runs it — the drop-in way for consumer repos.",
-      "exports": ["jobs.brimyr"],
-      "depends_on": ["surface.action"]
+      "purpose": "Reusable workflow (workflow_call) that checks out with enough history, sets up the toolchain, fetches the action, and runs it \u2014 the drop-in way for consumer repos.",
+      "exports": [
+        "jobs.brimyr"
+      ],
+      "depends_on": [
+        "surface.action"
+      ]
     },
     "surface.hook": {
       "path": ".pre-commit-hooks.yaml",
       "purpose": "pre-commit hook id `brimyr` running `brimyr local` at the pre-push stage (too heavy for pre-commit: it runs the whole suite).",
-      "exports": ["brimyr"],
-      "depends_on": ["cli"]
+      "exports": [
+        "brimyr"
+      ],
+      "depends_on": [
+        "cli"
+      ]
+    },
+    "ci.workflows": {
+      "path": ".github/workflows/",
+      "purpose": "Repo-owned GitHub Actions. ci.yml has TWO jobs (test, broker) because broker/ is a separate project excluded from the root ruff and pytest config. coverage.yml is brimyr gating brimyr: it runs both suites itself and feeds the action both reports, because a single auto-detected run cannot see broker/. major-tag.yml keeps the floating v1 tag on the latest release and broker-publish.yml uploads the Lambda zip on release \u2014 both are repo-owned precisely because release.yml is caldrith-provisioned and overwritten in place.",
+      "exports": [
+        "broker-publish.yml",
+        "broker-smoke.yml",
+        "ci.yml",
+        "coverage.yml",
+        "gate.yml",
+        "major-tag.yml",
+        "release.yml",
+        "security.yml"
+      ],
+      "depends_on": [
+        "surface.action",
+        "broker_client"
+      ]
+    },
+    "broker": {
+      "path": "broker/",
+      "purpose": "A SEPARATE DEPLOYABLE \u2014 the AWS Lambda token broker that mints Brimyr[bot] installation tokens. Its own pyproject/uv.lock/ruff, py312, and third-party deps (pyjwt[crypto], cryptography, httpx); the CLI stays stdlib-only. Nothing under src/brimyr imports `app.*` and it never will \u2014 the only coupling is the HTTP contract broker_client speaks. Also holds terraform/ (prod module + eu-west-1 root), localstack/ (docker-compose + tofu + smoke.py, a full local loop that touches no real AWS), scripts/build_lambda_zip.py, and a Makefile whose `test` target is `uv run --extra dev pytest -q`.",
+      "exports": [
+        "Makefile targets: up/down/zip/apply/seed/smoke/test/fmt/clean"
+      ],
+      "depends_on": []
+    },
+    "broker.app.lambda_handler": {
+      "path": "broker/app/lambda_handler.py",
+      "purpose": "The Lambda entrypoint behind an API Gateway HTTP API, payload format 2.0. Pure transport: method + rawPath + body -> app.broker -> (status, body). No decision lives here, which is what keeps the deployed Lambda and the tests on the same code path. _ROUTES exists so a wrong verb answers 405 rather than 404.",
+      "exports": [
+        "handler"
+      ],
+      "depends_on": [
+        "broker.app.broker"
+      ]
+    },
+    "broker.app.broker": {
+      "path": "broker/app/broker.py",
+      "purpose": "THE BROKER'S DECISIONS, with no HTTP framework attached \u2014 every endpoint is a function from a request to (status, body). THE EVALUATION ORDER IS LOAD-BEARING: a malformed request is answered before configuration is consulted. handle_token validates owner/repo before either reaches a URL path or a claim comparison, applies the optional allowlist, verifies the OIDC token, checks the token's own `repository` claim against the repo asked for, then mints. Its error strings are the fixed vocabulary broker_client whitelists.",
+      "exports": [
+        "handle_health",
+        "handle_ready",
+        "handle_token"
+      ],
+      "depends_on": [
+        "broker.app.config",
+        "broker.app.github",
+        "broker.app.oidc"
+      ]
+    },
+    "broker.app.oidc": {
+      "path": "broker/app/oidc.py",
+      "purpose": "Verifies a GitHub Actions OIDC token: RS256, issuer-pinned, audience-checked. Fetches JWKS with httpx rather than jwt.PyJWKClient, which would block the async path on urllib. key_resolver stays injectable (sync or async) so tests use a local key instead of reaching GitHub; the JWKS cache is module-level so a warm environment reuses it.",
+      "exports": [
+        "verify_oidc_token",
+        "JwksResolver",
+        "KeyResolver",
+        "OidcError",
+        "JwksUnavailable"
+      ],
+      "depends_on": [
+        "broker.app.config"
+      ]
+    },
+    "broker.app.github": {
+      "path": "broker/app/github.py",
+      "purpose": "Signs an App JWT (RS256) with the Brimyr App key, resolves the repo's installation, and mints a token scoped to JUST that repo with JUST the requested permissions. validate_repository rejects anything that could alter a URL path ('/', '%', ':', and the '..' traversal sequence specifically) before it is interpolated.",
+      "exports": [
+        "mint_installation_token",
+        "app_jwt",
+        "validate_repository",
+        "InvalidRepositoryError"
+      ],
+      "depends_on": []
+    },
+    "broker.app.config": {
+      "path": "broker/app/config.py",
+      "purpose": "One frozen dataclass for two runtimes: on Lambda, APP_ID/PRIVATE_KEY come from SSM under SECRET_PATH and are overlaid on os.environ; locally everything is already in the environment and boto3 is never imported. NO PYDANTIC on purpose \u2014 ~5 MB of zip and the dominant cold-start term to validate six strings. Also un-escapes the \\n-escaped PEM secret stores hand back.",
+      "exports": [
+        "BrokerConfig",
+        "load_config",
+        "ConfigError",
+        "GITHUB_OIDC_ISSUER",
+        "GITHUB_OIDC_JWKS"
+      ],
+      "depends_on": [
+        "broker.app.ssm"
+      ]
+    },
+    "broker.app.ssm": {
+      "path": "broker/app/ssm.py",
+      "purpose": "Reads the App secrets from SSM Parameter Store once per execution environment. Standard-tier SecureString is free where Secrets Manager is $0.40/secret/month, and SSM keeps the PEM behind its own IAM statement instead of in a Lambda env var any lambda:GetFunctionConfiguration holder can read. Negative caching (NEGATIVE_TTL_SECONDS) stops one broken deployment throttling the account's shared 40 TPS.",
+      "exports": [
+        "secrets",
+        "client",
+        "reset_cache",
+        "NEGATIVE_TTL_SECONDS"
+      ],
+      "depends_on": []
     },
     "tests": {
       "path": "tests/",
-      "purpose": "One test module per source module (tests/test_<module>.py), plus conftest.py fixtures. Core modules are tested on literal diff/report text; edge modules inject a fake runner so no real toolchain is needed.",
-      "exports": ["conftest fixtures"],
-      "depends_on": ["cli", "coverage.patch", "coverage.diff", "detect", "gate", "runner", "sonar", "report", "local", "modes"]
+      "purpose": "One test module per source module (tests/test_<module>.py), plus conftest.py fixtures. Core modules are tested on literal diff/report text; edge modules inject a fake runner or a fake urllib opener so no real toolchain and no network are needed. The broker has its OWN suite under broker/tests/ run from broker/ \u2014 see the `broker` module entry.",
+      "exports": [
+        "conftest fixtures"
+      ],
+      "depends_on": [
+        "cli",
+        "coverage.patch",
+        "coverage.diff",
+        "detect",
+        "gate",
+        "runner",
+        "sonar",
+        "report",
+        "local",
+        "modes",
+        "github_comment",
+        "broker_client"
+      ]
     }
   },
   "callgraph_highlights": [
     {
       "caller": "cli.main",
-      "calls": ["cli.build_parser", "cli.cmd_ci", "cli.cmd_coverage", "cli.cmd_local", "cli.cmd_version"],
+      "calls": [
+        "cli.build_parser",
+        "cli.cmd_ci",
+        "cli.cmd_coverage",
+        "cli.cmd_local",
+        "cli.cmd_version"
+      ],
       "note": "Pure dispatch. Every command except `version` funnels into _run_flow."
     },
     {
       "caller": "cli._run_flow",
-      "calls": ["cli._collect_coverage", "git.compute_changed_lines", "coverage.patch.compute_patch_coverage", "gate.decide_gate", "cli._maybe_run_sonar", "report.render_summary", "report.append_step_summary", "cli._emit_outputs"],
-      "note": "The whole product in ~40 lines — read this before anything else. Baseline mode and broken runs skip the diff and gate on an empty DiffIndex."
+      "calls": [
+        "cli._collect_coverage",
+        "git.compute_changed_lines",
+        "coverage.patch.compute_patch_coverage",
+        "gate.decide_gate",
+        "cli._maybe_run_sonar",
+        "report.render_summary",
+        "report.append_step_summary",
+        "cli._maybe_post_comment",
+        "cli._emit_outputs"
+      ],
+      "note": "The whole product in ~45 lines \u2014 read this before anything else. Baseline mode and broken runs skip the diff and gate on an empty DiffIndex. The comment is posted after the summary is rendered, because it IS the summary."
+    },
+    {
+      "caller": "cli._maybe_post_comment",
+      "calls": [
+        "cli._comment_token",
+        "cli._pr_number_from_event",
+        "github_comment.CommentConfig",
+        "github_comment.post_pr_comment"
+      ],
+      "note": "The whole PR-comment path. No pr_comment flag or no PR number => returns None and nothing is posted. Everything downstream is failure-isolated, so this can only ever add a line to stderr, never change the exit code."
+    },
+    {
+      "caller": "cli._comment_token",
+      "calls": [
+        "broker_client.mint_bot_token",
+        "broker_client.request_actions_oidc_token"
+      ],
+      "note": "Returns (token, byline). No token_broker_url => GITHUB_TOKEN and an empty byline. ANY broker failure => GITHUB_TOKEN and ' as github-actions[bot] (<reason>)'. A broken broker costs a byline, never a comment and never a merge \u2014 which is precisely why it needs broker-smoke.yml to be noticed at all."
+    },
+    {
+      "caller": "broker.app.broker.handle_token",
+      "calls": [
+        "broker.app.github.validate_repository",
+        "broker.app.config.load_config",
+        "broker.app.oidc.verify_oidc_token",
+        "broker.app.github.mint_installation_token"
+      ],
+      "note": "The other end of the wire from broker_client.mint_bot_token, reached via lambda_handler.handler. Order is deliberate: malformed input is rejected before config is consulted, and the OIDC token's own `repository` claim must match the repo requested \u2014 that check is what stops one repo's runner minting a token for another."
     },
     {
       "caller": "cli._collect_coverage",
-      "calls": ["runner.ingest_file", "coverage.model.merge_reports", "detect.detect_ecosystems", "detect.ecosystem", "runner.run_tests"],
+      "calls": [
+        "runner.ingest_file",
+        "coverage.model.merge_reports",
+        "detect.detect_ecosystems",
+        "detect.ecosystem",
+        "runner.run_tests"
+      ],
       "note": "--coverage-file is an escape hatch that ingests pre-made reports and never runs tests; otherwise ecosystems are detected (or forced) and run."
     },
     {
       "caller": "runner.run_one",
-      "calls": ["detect.locate_coverage_file", "runner.ingest_file", "coverage.lcov.parse_lcov", "coverage.cobertura.parse_cobertura"],
+      "calls": [
+        "detect.locate_coverage_file",
+        "runner.ingest_file",
+        "coverage.lcov.parse_lcov",
+        "coverage.cobertura.parse_cobertura"
+      ],
       "note": "Every failure path here produces RunOutcome.error -> RunResult.broken -> exit 2, never a 0% gate failure."
     },
     {
       "caller": "coverage.patch.compute_patch_coverage",
-      "calls": ["coverage.patch._index", "coverage.patch._match", "coverage.diff.FileDiff.added_lines"],
+      "calls": [
+        "coverage.patch._index",
+        "coverage.patch._match",
+        "coverage.diff.FileDiff.added_lines"
+      ],
       "note": "Denominator = added lines AND FileCoverage.executable. Deleted files are skipped; files the report never mentions contribute nothing (diff-cover behaviour)."
     },
     {
       "caller": "git.compute_changed_lines",
-      "calls": ["git.merge_base", "git.diff_text", "coverage.diff.parse_unified_diff"],
+      "calls": [
+        "git.merge_base",
+        "git.diff_text",
+        "coverage.diff.parse_unified_diff"
+      ],
       "note": "Shallow clones raise ShallowCloneError, which the CLI turns into exit 2 with a fetch-depth hint."
     },
     {
       "caller": "coverage.model.CoverageBuilder.record",
-      "calls": ["coverage.diff.normalize_path"],
+      "calls": [
+        "coverage.diff.normalize_path"
+      ],
       "note": "Max-hits-wins is why merging several ecosystems (or several test runs) can only ever mark more lines covered."
     }
   ],
@@ -165,6 +490,9 @@
     "src/brimyr/detect.py",
     "src/brimyr/runner.py",
     "src/brimyr/gate.py",
+    "src/brimyr/github_comment.py",
+    "src/brimyr/broker_client.py",
+    "broker/app/broker.py",
     "tests/test_patch.py",
     "action.yml",
     "docs/"
