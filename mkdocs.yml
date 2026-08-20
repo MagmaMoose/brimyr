@@ -38,6 +38,7 @@ nav:
   - .NET solutions: dotnet.md
   - Java / JVM: java.md
   - PR comment: pr-comment.md
+  - HTML report: html-report.md
   - CLI reference: cli.md
 
 markdown_extensions:

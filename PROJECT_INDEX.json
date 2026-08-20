@@ -186,6 +186,16 @@
         "sonar"
       ]
     },
+    "html_report": {
+      "path": "src/brimyr/html_report.py",
+      "purpose": "Wraps ReportGenerator (Apache-2.0) to render the coverage reports as browsable HTML for upload as an artifact. Chosen because it sniffs Cobertura/lcov/JaCoCo per input FILE, so a polyglot run needs no format branching; every alternative is single-format. HtmlInline (not Html) so the download opens styled from file://. Failure-isolated: a missing renderer or runtime never affects the gate.",
+      "exports": [
+        "render",
+        "build_args",
+        "HtmlReportResult"
+      ],
+      "depends_on": []
+    },
     "github_comment": {
       "path": "src/brimyr/github_comment.py",
       "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
