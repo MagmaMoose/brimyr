@@ -21,9 +21,10 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
-from brimyr import __version__, broker_client
+from brimyr import __version__, broker_client, sonar_dotnet
 from brimyr import git as bgit
 from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
@@ -35,6 +36,7 @@ from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage, compute_t
 from brimyr.detect import (
     CoverageFormat,
     Ecosystem,
+    SonarStrategy,
     detect_ecosystems,
     ecosystem,
 )
@@ -46,7 +48,7 @@ from brimyr.gate import (
 )
 from brimyr.local import resolve_local_base
 from brimyr.modes import Mode, resolve_mode
-from brimyr.runner import IngestError, RunResult, ingest_file, run_tests
+from brimyr.runner import IngestError, RunResult, ingest_file, run_command, run_tests
 
 _EXT_FORMAT = {
     ".info": CoverageFormat.LCOV,
@@ -289,22 +291,83 @@ def _collect_coverage(
     return result.report, result.broken, ecosystems, sonar_paths
 
 
-def _maybe_run_sonar(
-    args: argparse.Namespace, sonar_paths: dict[str, tuple[str, ...]]
-) -> str | None:
-    if not args.sonar_url:
-        return None
-    token = os.environ.get(args.sonar_token_env, "")
-    config = sonar_mod.SonarConfig(
+def _sonar_config(
+    args: argparse.Namespace, sonar_paths: dict[str, tuple[str, ...]] | None = None
+) -> sonar_mod.SonarConfig:
+    return sonar_mod.SonarConfig(
         host_url=args.sonar_url,
-        token=token,
-        project_key=args.sonar_project_key,
+        token=os.environ.get(args.sonar_token_env, ""),
+        project_key=args.sonar_project_key or _default_project_key(),
         organization=args.sonar_organization,
         sources=args.sonar_sources,
-        coverage_report_paths=sonar_paths,
+        coverage_report_paths=sonar_paths or {},
         extra_args=tuple(args.sonar_arg or ()),
     )
-    result = sonar_mod.run_scanner(config, args.repo)
+
+
+def _default_project_key() -> str:
+    """``owner/repo`` -> ``owner_repo``.
+
+    Without a key `sonar-scanner` aborts, which is most of why the Sonar leg has never
+    run for anyone. Sonar keys may not contain ``/``, so the slug cannot be used as-is.
+    An explicit ``--sonar-project-key`` always wins.
+    """
+    return os.environ.get("GITHUB_REPOSITORY", "").replace("/", "_")
+
+
+def _warn(message: str) -> None:
+    """Annotate the run, not just the log.
+
+    Plain stderr scrolls past in a green job and nobody sees it — which is exactly how
+    "Sonar is wired up" stayed believable while nothing was ever uploaded. On Actions
+    this surfaces on the summary page; elsewhere it is an ordinary stderr line.
+    """
+    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "brimyr: warning: "
+    _eprint(f"{prefix}{message}")
+
+
+def _missing_sonar_props(
+    ecosystems: Sequence[Ecosystem], extra_args: Sequence[str]
+) -> dict[str, tuple[str, ...]]:
+    """Required Sonar properties an ecosystem needs that the caller did not supply."""
+    supplied = {
+        arg.split("=", 1)[0].lstrip("-D").lstrip("/d:").strip() for arg in extra_args if "=" in arg
+    }
+    missing: dict[str, tuple[str, ...]] = {}
+    for eco in ecosystems:
+        absent = tuple(p for p in eco.sonar_required_props if p not in supplied)
+        if absent:
+            missing[eco.label] = absent
+    return missing
+
+
+def _maybe_run_sonar(
+    args: argparse.Namespace,
+    sonar_paths: dict[str, tuple[str, ...]],
+    ecosystems: Sequence[Ecosystem] = (),
+) -> str | None:
+    """Post-hoc `sonar-scanner` pass. Never raises; never changes the verdict."""
+    if not args.sonar_url:
+        return None
+    if not os.environ.get(args.sonar_token_env, ""):
+        _warn(
+            f"SonarQube host is set but ${args.sonar_token_env} is empty — "
+            "no analysis was uploaded."
+        )
+        return f"skipped (no token in ${args.sonar_token_env})"
+
+    missing = _missing_sonar_props(ecosystems, args.sonar_arg or ())
+    if missing:
+        detail = "; ".join(f"{label} needs {', '.join(props)}" for label, props in missing.items())
+        # Running anyway would not merely be useless: `sonar-scanner` over a Java repo
+        # without sonar.java.binaries fails outright. A skip that says why beats a red
+        # herring in the log.
+        _warn(f"SonarQube analysis skipped — {detail} (pass it with --sonar-arg).")
+        return f"skipped ({detail})"
+
+    result = sonar_mod.run_scanner(_sonar_config(args, sonar_paths), args.repo)
+    if not result.ok:
+        _warn(f"SonarQube: {result.message}")
     return result.message
 
 
@@ -363,7 +426,67 @@ def _pr_number_from_event() -> int:
     return number if isinstance(number, int) else 0
 
 
+def _wants_dotnet_scanner(args: argparse.Namespace) -> bool:
+    """True when this run should wrap itself in `dotnet sonarscanner begin/end`.
+
+    Requires an actual test run: the .NET analysis comes from Roslyn analyzers injected
+    into a compilation, so with `--coverage-file` (no build, no test run) there is
+    nothing for `end` to collect and the whole wrap would upload an empty analysis.
+    """
+    if not args.sonar_url or args.coverage_file:
+        return False
+    forced = [ecosystem(k) for k in (args.ecosystem or [])]
+    detected = [e for e in forced if e] if args.ecosystem else detect_ecosystems(args.repo)
+    return any(e.sonar_strategy is SonarStrategy.DOTNET for e in detected)
+
+
 def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
+    # .NET is the one ecosystem whose scanner cannot follow the run — it has to wrap it,
+    # because `end` collects analysis data the compilation produced. Everything else
+    # stays a post-step.
+    if _wants_dotnet_scanner(args):
+        return _run_flow_wrapped(args, mode)
+    return _run_flow_inner(args, mode, sonar=None)
+
+
+def _run_flow_wrapped(args: argparse.Namespace, mode: Mode) -> int:
+    globs = {
+        eco.sonar_property: eco.sonar_report_globs
+        for eco in detect_ecosystems(args.repo)
+        if eco.sonar_property and eco.sonar_report_globs
+    }
+    with sonar_dotnet.session(_sonar_config(args), args.repo, report_globs=globs) as outcome:
+        if outcome.skipped:
+            _warn(f"SonarQube analysis skipped — {outcome.skipped}.")
+        elif outcome.begin is not None and not outcome.begin.ok:
+            _warn(f"SonarQube: {outcome.begin.message}")
+        elif outcome.started:
+            # The compile has to happen INSIDE the window, and it has to be a real one:
+            # an incremental build compiles nothing, so the analyzers `begin` injected
+            # never run and `end` finds no analysis data.
+            _run_sonar_build(args)
+        code = _run_flow_inner(args, mode, sonar=None)
+    message = outcome.message
+    if message and not outcome.ok:
+        _warn(f"SonarQube: {message}")
+    return code
+
+
+def _run_sonar_build(args: argparse.Namespace) -> None:
+    """Run each detected ecosystem's `sonar_build_command`. Never fails the gate."""
+    for eco in detect_ecosystems(args.repo):
+        if not eco.sonar_build_command:
+            continue
+        outcome = run_command(eco.sonar_build_command, args.repo)
+        if not outcome.ok:
+            _warn(
+                f"SonarQube: `{' '.join(eco.sonar_build_command)}` failed "
+                f"(exit {outcome.returncode}, non-blocking) — the analysis will be empty."
+            )
+
+
+def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int:
+    del sonar
     collected = _collect_coverage(args)
     if isinstance(collected, int):
         return collected
@@ -395,7 +518,10 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
     except ValueError as exc:
         return _fail(str(exc))
 
-    sonar_message = _maybe_run_sonar(args, sonar_paths) if not broken else None
+    wrapped = any(e.sonar_strategy is SonarStrategy.DOTNET for e in ecosystems)
+    # The .NET scanner analyses the whole tree; a second plain `sonar-scanner` run
+    # against the same projectKey would overwrite what it just uploaded.
+    sonar_message = None if (broken or wrapped) else _maybe_run_sonar(args, sonar_paths, ecosystems)
 
     if args.json_out:
         Path(args.json_out).write_text(

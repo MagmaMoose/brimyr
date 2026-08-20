@@ -21,6 +21,23 @@ from enum import StrEnum
 from pathlib import Path
 
 
+class SonarStrategy(StrEnum):
+    """How an ecosystem's analysis reaches SonarQube.
+
+    Not a detail: it changes *when* the scanner runs. ``CLI`` is a post-step — the
+    coverage files already exist and their paths are passed as ``-D`` properties.
+    ``DOTNET`` is not, and cannot be made one: SonarSource documents that the
+    SonarScanner CLI "doesn't support C# or VB.NET analysis" at all, because C#
+    issues come from Roslyn analyzers that ``dotnet sonarscanner begin`` injects
+    into the compilation. No compile between ``begin`` and ``end`` means no
+    analysis, so the scanner has to *wrap* the build and test run rather than
+    follow it.
+    """
+
+    CLI = "cli"
+    DOTNET = "dotnet"
+
+
 class CoverageFormat(StrEnum):
     LCOV = "lcov"
     COBERTURA = "cobertura"
@@ -41,6 +58,18 @@ class Ecosystem:
     coverage_paths: tuple[str, ...]
     # SonarQube property a sonar-scanner run uses to ingest this report.
     sonar_property: str = ""
+    # Which scanner, and therefore whether it wraps the run or follows it.
+    sonar_strategy: SonarStrategy = SonarStrategy.CLI
+    # DOTNET only. Wildcards handed to `begin`, BEFORE any report file exists —
+    # `end` accepts only three flags, so the coverage path must be declared up front.
+    sonar_report_globs: tuple[str, ...] = ()
+    # DOTNET only. The compile that has to sit inside the begin/end window.
+    # `--no-incremental` is not optional: a cached build compiles nothing, so the
+    # analyzers `begin` injected never run and `end` finds no analysis data.
+    sonar_build_command: tuple[str, ...] = ()
+    # Properties the caller MUST supply (via sonar_args) or the analysis is skipped
+    # with a warning instead of being run and producing junk.
+    sonar_required_props: tuple[str, ...] = ()
     # Optional extra confirmation beyond bare marker presence. When set, the
     # ecosystem is only auto-detected if this also returns True for the repo root —
     # a guard against markers that don't imply a real test run (e.g. a package.json
@@ -165,10 +194,17 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         ),
         coverage_format=CoverageFormat.COBERTURA,
         coverage_paths=("TestResults/**/coverage.cobertura.xml",),
-        # The patch-coverage gate works from this Cobertura file directly. Shipping
-        # .NET coverage to Sonar needs the dedicated SonarScanner for .NET
-        # (begin/end), not a plain `sonar-scanner` -D property, so leave it unset.
-        sonar_property="",
+        # NOTE the plural: `reportsPaths`, unlike sonar.python.coverage.reportPaths
+        # and sonar.javascript.lcov.reportPaths. Sonar is not consistent here and the
+        # singular form is silently ignored.
+        sonar_property="sonar.cs.cobertura.reportsPaths",
+        sonar_strategy=SonarStrategy.DOTNET,
+        # Declared at `begin`, so it has to be a wildcard — the reports do not exist
+        # yet, and a solution writes one per test project. Sonar documents this
+        # property as comma-delimited WITH wildcard support, which is what makes the
+        # multi-test-project case work without enumerating GUID directories.
+        sonar_report_globs=("**/TestResults/**/coverage.cobertura.xml",),
+        sonar_build_command=("dotnet", "build", "--no-incremental", "--disable-build-servers"),
     ),
     Ecosystem(
         key="java",
@@ -190,6 +226,13 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "**/build/reports/jacoco/**/*.xml",
         ),
         sonar_property="sonar.coverage.jacoco.xmlReportPaths",
+        # `sonar-scanner -Dsonar.sources=.` over a Java repo fails outright with
+        # "please provide compiled classes with sonar.java.binaries", and Sonar
+        # separately documents that the CLI scanner should not be used on Maven
+        # projects at all. Rather than ship a run that cannot succeed, require the
+        # caller to name the binaries via `sonar_args` — otherwise the analysis is
+        # skipped with a warning that says exactly that.
+        sonar_required_props=("sonar.java.binaries",),
         confirm=_java_is_maven,
     ),
 )

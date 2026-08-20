@@ -161,14 +161,29 @@ matching; pass `strip_prefix` to peel known roots.
 
 ## SonarQube
 
-Optional and non-blocking. Set `sonar_url` (and pass `SONAR_TOKEN`) and Brimyr runs
-`sonar-scanner` after computing the gate, pointing Sonar at the coverage file(s) it
-already produced (`sonar.python.coverage.reportPaths`,
-`sonar.javascript.lcov.reportPaths`). **A Sonar failure never fails the gate** — a
-missing binary, a bad URL, or an outage is logged and the run continues.
+Optional and non-blocking, and it **actually installs a scanner** — set `sonar_url`
+plus `SONAR_TOKEN` and that is the whole configuration. The project key defaults to
+the repo slug (`owner/repo` → `owner_repo`), because `sonar-scanner` aborts without one.
 
-> .NET coverage → Sonar needs the dedicated *SonarScanner for .NET* (begin/end);
-> Brimyr's patch-coverage gate works from the Cobertura file directly regardless.
+**A Sonar failure never fails the gate.** An outage, a bad URL or a missing token is a
+`::warning::` annotation and the run continues.
+
+Note that this is a full SonarQube **analysis**, not a coverage upload: bugs, code
+smells, duplication and security hotspots come along with it whether or not you look at
+them. There is no coverage-only mode.
+
+| Ecosystem | Scanner | Property |
+| --- | --- | --- |
+| Python | `sonar-scanner` (post-step) | `sonar.python.coverage.reportPaths` |
+| JS / TS | `sonar-scanner` (post-step) | `sonar.javascript.lcov.reportPaths` |
+| Java | `sonar-scanner` (post-step) | `sonar.coverage.jacoco.xmlReportPaths` — **needs `sonar.java.binaries`**, see `docs/java.md` |
+| .NET | `dotnet sonarscanner` **wrapping the build** | `sonar.cs.cobertura.reportsPaths` |
+
+.NET is the odd one and cannot be made uniform: SonarSource documents that the
+SonarScanner CLI *"doesn't support C# or VB.NET analysis"*, because C# issues come from
+Roslyn analyzers injected into the compilation. So for .NET the scanner **wraps** the
+run — `begin` → `dotnet build --no-incremental` → your tests → `end` — instead of
+following it. Brimyr does that automatically when it detects .NET; nothing to configure.
 
 ## CLI
 
