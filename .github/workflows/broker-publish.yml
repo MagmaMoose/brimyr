@@ -312,8 +312,3 @@ jobs:
             echo "broker_artifact_version = \"${VERSION}\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "${CHANGED}" = 'false' ]; then
-            echo >> "$GITHUB_STEP_SUMMARY"
-            echo "Nothing under \`broker/app/\`, \`broker/uv.lock\` or the build script changed since \`${PREVIOUS}\`, and the build is byte-reproducible — this object's contents match that release's. Bumping the leaf would redeploy identical code." >> "$GITHUB_STEP_SUMMARY"
-          fi
