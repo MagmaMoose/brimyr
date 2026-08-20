@@ -14,6 +14,10 @@
 - **`.xml` is not a format.** Cobertura and JaCoCo share it; parsing JaCoCo as
   Cobertura yields an *empty* report → vacuous 100% over untested code.
   `cli._sniff_xml_format` picks by root element; never re-add `.xml` to `_EXT_FORMAT`.
+- **Total coverage is not a `sum(report.files)`.** `merge_reports` keys by exact path
+  string, so one file rooted two ways (multi-project .NET) counts twice — measured, 50%
+  where the truth is 100%. Use `compute_total_coverage`, which folds by path-suffix and
+  applies `exclude_globs`. Empty denominator ⇒ `None`, never the gate's vacuous 100%.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not the callers.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.

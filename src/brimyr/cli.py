@@ -31,7 +31,7 @@ from brimyr import sonar as sonar_mod
 from brimyr.coverage.diff import DiffIndex
 from brimyr.coverage.jacoco import is_jacoco
 from brimyr.coverage.model import CoverageReport, merge_reports
-from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage
+from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage, compute_total_coverage
 from brimyr.detect import (
     CoverageFormat,
     Ecosystem,
@@ -122,6 +122,17 @@ def counts_to_dict(decision: GateDecision) -> dict[str, object]:
         "total_lines": patch.total_lines,
         "missing_lines": patch.missing_lines,
         "threshold": decision.threshold,
+        # Deliberately NOT "total_lines" — that key already ships meaning the PATCH
+        # denominator, and silently changing it would break every consumer.
+        "total_coverage": (
+            None
+            if decision.total is None or not decision.total.measured
+            else round(decision.total.percent, 2)
+        ),
+        "total_covered_lines": None if decision.total is None else decision.total.covered_lines,
+        "total_executable_lines": (
+            None if decision.total is None else decision.total.executable_lines
+        ),
         # Mirror _emit_outputs: a broken run is an error, not a 0%/pass result.
         "gate_result": "error" if decision.broken else ("fail" if decision.failed else "pass"),
         "files": [
@@ -174,6 +185,10 @@ def _emit_outputs(decision: GateDecision, *, mode: Mode | None, broken: bool) ->
         "gate_result": "error" if broken else ("fail" if decision.failed else "pass"),
         "gate_failed": "true" if (broken or decision.failed) else "false",
     }
+    # Empty string when nothing was measured, never "0.00" — an unmeasured run and a
+    # genuinely zero-covered one must not look the same to a downstream `if`.
+    if decision.total is not None:
+        pairs["total_coverage"] = f"{decision.total.percent:.2f}" if decision.total.measured else ""
     if mode is not None:
         pairs["mode"] = mode.value
     report_mod.write_outputs(pairs)
@@ -203,9 +218,11 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     except bgit.GitError as exc:
         return _fail(str(exc))
 
-    patch = compute_patch_coverage(diff, report, _patch_policy(args))
+    policy = _patch_policy(args)
+    patch = compute_patch_coverage(diff, report, policy)
+    total = compute_total_coverage(report, policy)
     try:
-        decision = decide_gate(patch, args.threshold, gate=not args.no_gate)
+        decision = decide_gate(patch, args.threshold, gate=not args.no_gate, total=total)
     except ValueError as exc:
         return _fail(str(exc))
 
@@ -352,6 +369,12 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
         return collected
     report, broken, ecosystems, sonar_paths = collected
 
+    # One policy for both numbers. Total coverage has to honour the same exclude globs
+    # as the patch gate, or a PR comment shows two figures disagreeing by twenty points
+    # because one of them still counts the EF migrations.
+    repo_abs = str(Path(args.repo).resolve())
+    policy = _patch_policy(args, (repo_abs,))
+
     # Patch coverage only in gate mode; baseline computes nothing to gate on.
     if mode.gates and not broken:
         if not args.base:
@@ -362,13 +385,13 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
             )
         except bgit.GitError as exc:
             return _fail(str(exc))
-        repo_abs = str(Path(args.repo).resolve())
-        patch = compute_patch_coverage(diff, report, _patch_policy(args, (repo_abs,)))
+        patch = compute_patch_coverage(diff, report, policy)
     else:
         patch = compute_patch_coverage(DiffIndex(()), report)
 
     try:
-        decision = decide_gate(patch, args.threshold, broken=broken, gate=mode.gates)
+        total = compute_total_coverage(report, policy)
+        decision = decide_gate(patch, args.threshold, broken=broken, gate=mode.gates, total=total)
     except ValueError as exc:
         return _fail(str(exc))
 

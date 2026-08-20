@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from brimyr.coverage.patch import PatchCoverage
+from brimyr.coverage.patch import PatchCoverage, TotalCoverage
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -37,6 +37,10 @@ class GateDecision:
     failed: bool
     broken: bool
     gated: bool
+    # Reported, never gated on — the chargate split, where the build blocks on net-new
+    # findings but the full picture still ships. Trailing and optional so every existing
+    # construction stays valid; `failed` and `exit_code` deliberately ignore it.
+    total: TotalCoverage | None = None
 
     @property
     def percent(self) -> float:
@@ -55,6 +59,7 @@ def decide_gate(
     *,
     broken: bool = False,
     gate: bool = True,
+    total: TotalCoverage | None = None,
 ) -> GateDecision:
     """Decide whether patch coverage blocks, given a threshold.
 
@@ -78,4 +83,5 @@ def decide_gate(
         failed=failed,
         broken=broken,
         gated=gate,
+        total=total,
     )

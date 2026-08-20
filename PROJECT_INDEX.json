@@ -100,12 +100,14 @@
     },
     "coverage.patch": {
       "path": "src/brimyr/coverage/patch.py",
-      "purpose": "THE GATE'S HEART. Intersects a DiffIndex with a CoverageReport: added lines AND executable lines -> covered/missing per file, plus the overall percentage. Path matching goes exact -> prefix-stripped -> suffix in either direction (PatchPolicy).",
+      "purpose": "THE GATE'S HEART. Intersects a DiffIndex with a CoverageReport: added lines AND executable lines -> covered/missing per file, plus the overall percentage. Path matching goes exact -> prefix-stripped -> suffix in either direction (PatchPolicy). Also compute_total_coverage(): overall coverage of the files the run MEASURED, reported next to the gate and never gated on; folds report entries that are the same file rooted two ways (merge_reports keys by exact string, so a shared file in a multi-project solution otherwise counts twice) and honours the same exclude_globs.",
       "exports": [
         "compute_patch_coverage",
         "PatchCoverage",
         "PatchPolicy",
-        "PatchFileResult"
+        "PatchFileResult",
+        "compute_total_coverage",
+        "TotalCoverage"
       ],
       "depends_on": [
         "coverage.diff",
@@ -195,7 +197,7 @@
     },
     "gate": {
       "path": "src/brimyr/gate.py",
-      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, and the vacuous pass when nothing coverable changed.",
+      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, and the vacuous pass when nothing coverable changed. GateDecision carries an optional TotalCoverage that nothing gates on.",
       "exports": [
         "decide_gate",
         "GateDecision",
