@@ -123,6 +123,12 @@ class QualityDecision:
     # The scan never completed, so `counts` is a placeholder and means nothing. Exit 2,
     # exactly as a failed test run is an error rather than 0% coverage.
     broken: bool = False
+    # Linters the scan could not run, verbatim from chargate. A *completed* scan is not
+    # necessarily a *full* one — chargate exits 0 having declined to start a linter it
+    # has no image for — and a smaller scan reporting nothing looks exactly like a clean
+    # repo. Never gates; it is said out loud instead, which is the contract chargate
+    # already applies to its own degraded runs.
+    scan_note: str = ""
     # `path:line [rule]` strings skimmed from the filtered SARIF for the summary, or
     # empty when no `--findings` file was supplied. Never feeds `failed`.
     listing: tuple[str, ...] = ()
@@ -339,12 +345,14 @@ def decide_quality_gate(
     *,
     gate: bool = True,
     listing: tuple[str, ...] = (),
+    scan_note: str = "",
 ) -> QualityDecision:
     """Decide whether the net-new quality findings block, at ``fail_on``.
 
     ``gate=False`` makes the run report-only regardless of ``fail_on`` (baseline mode,
     which has no diff and therefore no net-new set worth gating). ``listing`` is the
-    display-only text from :func:`read_finding_lines`.
+    display-only text from :func:`read_finding_lines`, and ``scan_note`` names any
+    linters the scan could not run.
     """
     normalized = fail_on.strip().lower()
     if normalized not in FAIL_ON_CHOICES:
@@ -375,4 +383,5 @@ def decide_quality_gate(
         reason=reason,
         listing=shown,
         listing_truncated=max(0, len(listing) - len(shown)),
+        scan_note=scan_note.strip(),
     )

@@ -85,22 +85,42 @@ The threshold speaks SARIF **levels** and not Chargate's severity bands. Chargat
 on per-result verdicts, where a missing `security-severity` falls back to the level, so
 its bands work. Brimyr reads only the counts document, whose `per_severity_*` maps are
 populated solely from a real `security-severity` — a property quality linters essentially
-never emit — so a band-valued threshold read off it would match nothing on every PR. It defaults to `none` for the same reason a first PR should not go
-red with hundreds of findings: measure a release cycle, then pick a level.
+never emit — so a band-valued threshold read off it would match nothing on every PR. It
+defaults to `none` for the same reason a first PR should not go red with hundreds of
+findings: measure a release cycle, then pick a level.
 
 The nested step is `magmamoose/chargate`, pinned by SHA and bumped by Dependabot like
 every other action here. It runs with `fail_on: none` and `continue-on-error: true`, so
 Chargate never sets this job's exit code and a Docker or MegaLinter failure can't take
-the coverage gate down with it. That is not a silent pass: with no counts file to read,
-Brimyr exits `2` saying so. The verdict is folded into the coverage summary and the
-coverage comment, and the job's exit code becomes the worse of the two halves on the
-`0` < `1` < `2` scale — clean coverage does not launder a blocking quality finding. In
-`baseline` mode neither half gates.
+the coverage gate down with it. That is not a silent pass: the action branches on that
+step's `outcome`, and on anything other than `success` it passes `--quality-scan-broken`,
+which reads no file at all and reports a scan that did not complete — exit `2`, and
+`quality_gate_result` `error`.
+
+It goes by the outcome rather than by the file because the file settles nothing.
+`chargate ci` writes its counts JSON *before* it decides whether the scan produced any
+runs, so a failed scan can leave a well-formed row of zeros behind, which is precisely
+what a clean pull request looks like.
+
+The verdict is folded into the coverage summary and the coverage comment, and the job's
+exit code becomes the worse of the two halves on the `0` < `1` < `2` scale — clean
+coverage does not launder a blocking quality finding. In `baseline` mode neither half
+gates.
+
+!!! note "An exit-`0` scan is not proof of a complete one"
+    Chargate can decline to start a linter — no image for the runner's architecture, no
+    SARIF output, the linter disabled — and still exit `0`, so anything that linter would
+    have reported is missing from the count, and missing findings are what a clean repo
+    looks like too. The action forwards Chargate's `linters_skipped` output as
+    `--quality-scan-note`, and Brimyr states the shortfall next to the count in the
+    summary and the comment. It never blocks. See
+    [Quality findings](quality-findings.md#a-scan-that-completed-is-not-necessarily-a-full-one).
 
 !!! warning "`quality: true` needs a Chargate release that does not exist yet"
     The pinned ref is `v2.11.25`, which has no `quality` flavor, so the nested step fails
-    on it. Leave `quality` at `false` until Chargate ships the flavor and the pin here is
-    bumped to that release.
+    on it and Brimyr reports a broken scan: exit `2`, `quality_gate_result` `error`.
+    Leave `quality` at `false` until Chargate ships the flavor and the pin here is bumped
+    to that release.
 
 ## Runtime
 
@@ -123,7 +143,7 @@ coverage comment, and the job's exit code becomes the worse of the two halves on
 | `covered_lines` | Covered changed executable lines. |
 | `total_lines` | Total changed executable lines, the patch-coverage denominator. |
 | `total_coverage` | Overall coverage across the files the run measured. **Empty string** when nothing was measured, never `0.00`, so an unmeasured run and a genuinely zero-covered one don't look the same to a downstream `if`. |
-| `quality_gate_result` | `pass` or `fail` for the quality half. Empty when `quality` is off. |
+| `quality_gate_result` | `pass`, `fail` or `error` for the quality half. `error` means the scan did not complete, which is the state to notice first: it is a tool error, not zero findings. Empty when `quality` is off. |
 | `quality_net_new_count` | Net-new (PR-introduced) quality findings. Empty when `quality` is off. |
 | `quality_blocking_count` | Net-new quality findings at or above `quality_fail_on` — the ones that actually block. |
 | `quality_fail_on` | The threshold that was in force. It ships alongside the verdict because at `none` a report-only run and a genuinely clean one both say `pass`, and they are not the same thing. Empty when `quality` is off. |

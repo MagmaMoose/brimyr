@@ -79,11 +79,20 @@ half, and a first PR that goes red with hundreds of findings is how a gate becom
 decoration nobody reads. Ship it reporting, measure a release cycle, then pick a SARIF
 level. See [Quality findings](quality-findings.md).
 
+A scan that never ran is not a clean one. The nested step is `continue-on-error`, so it
+cannot take the coverage gate down with it, but Brimyr goes by that step's `outcome`
+rather than by the counts file it may have left behind — a failed scan can leave a
+well-formed row of zeros on disk, which is what a clean PR looks like — and reports a
+tool error instead: exit **2**, `quality_gate_result` `error`. Nor is a scan that
+*completed* necessarily a full one: when Chargate could not start a linter it says which,
+and Brimyr states that shortfall beside the count rather than passing a smaller scan off
+as the whole answer.
+
 !!! warning "The pinned Chargate release does not ship the quality flavor yet"
     `action.yml` pins Chargate at `v2.11.25`, which has no `quality` flavor, so
     `quality: 'true'` cannot work until Chargate releases it and that pin is bumped.
-    Until then the nested step leaves no counts file behind and the run exits **2**:
-    a gate that cannot evaluate its input does not go green.
+    Until then the nested step fails and the run exits **2** reporting a scan that did
+    not complete: a gate that cannot evaluate its input does not go green.
 
 ## Two surfaces, one CLI
 

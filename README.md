@@ -245,6 +245,16 @@ properties. Chargate's own `fail_on` is pinned to `none` so it can never set the
 exit code: it reports, Brimyr decides. The verdict lands in the *same* job summary and
 the *same* PR comment as coverage, and the job exits on the worse of the two.
 
+The nested step is `continue-on-error`, so a Docker or MegaLinter failure cannot take the
+coverage gate down with it — and it is not a silent pass either. Brimyr branches on that
+step's `outcome`, never on the file it may have left behind: `chargate ci` writes its
+counts JSON *before* it knows whether the scan produced any runs, so a failed scan can
+leave a well-formed row of zeros on disk, which is exactly what a clean PR looks like. A
+scan that did not complete is therefore reported as a tool error — exit `2`, output
+`quality_gate_result: error` — and a scan that *did* complete but could not start every
+linter says which ones beside the count, rather than passing a smaller scan off as the
+whole answer.
+
 `quality_fail_on` defaults to `none` — **report-only, deliberately**. MegaLinter's
 quality half over a mature repo is far denser than its security half, and a first PR
 that goes red with hundreds of findings is how a gate becomes decoration nobody reads.
@@ -258,8 +268,8 @@ threshold read off it would sit there never blocking anything.
 > ⚠️ **The pinned Chargate release does not ship the quality flavor yet.** `action.yml`
 > pins Chargate at `v2.11.25`, which has no `quality` flavor, so `quality: 'true'`
 > cannot work until Chargate releases it and that pin is bumped. Until then the nested
-> step leaves no counts file behind and the run exits **2** rather than reporting a
-> clean scan.
+> step fails and the run exits **2** reporting a scan that did not complete, rather than
+> a clean one.
 
 ## SonarQube
 
@@ -304,7 +314,7 @@ brimyr lint --counts chargate-reports/counts.json --fail-on error
 ```
 
 Exit codes: `0` pass · `1` patch coverage below threshold, or blocking quality
-findings · `2` broken test run / setup error.
+findings · `2` broken test run / setup error, or a quality scan that did not complete.
 
 ## Modes
 

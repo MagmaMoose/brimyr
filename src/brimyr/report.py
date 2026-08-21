@@ -220,6 +220,17 @@ def render_quality_summary(decision: QualityDecision) -> str:
         lines.append("✅ No net-new quality findings.")
         lines.append("")
 
+    if decision.scan_note:
+        # An exit-0 scan is not necessarily a complete one. Chargate says so on its own
+        # PR comments for the same reason: a scan that quietly got smaller and a repo
+        # that is genuinely clean produce the same number.
+        lines.append(
+            "⚠️ **The scan was not complete** — these linters did not run: "
+            f"{decision.scan_note}. Anything they would have reported is missing from "
+            "the count above."
+        )
+        lines.append("")
+
     if decision.listing:
         lines.append("<details><summary>Net-new findings</summary>")
         lines.append("")

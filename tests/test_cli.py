@@ -678,3 +678,30 @@ def test_ci_quality_scan_broken_is_an_error_and_still_reports_coverage(repo, tmp
     # The half that DID work is still reported — a broken quality scan must not erase it.
     assert "Brimyr — patch coverage" in text  # nosec B101
     assert "The quality scan did not complete" in text  # nosec B101
+
+
+def test_lint_warns_when_the_scan_ran_fewer_linters_than_asked(tmp_path, capsys):
+    counts = _quality_counts(tmp_path / "counts.json", net_new=0, total=0, levels={})
+    code = main(
+        [
+            "lint",
+            "--counts",
+            str(counts),
+            "--fail-on",
+            "any",
+            "--scan-note",
+            "JAVA_PMD (no image known)",
+        ]
+    )
+    assert code == 0  # nosec B101
+    err = capsys.readouterr().err
+    assert "was not complete" in err  # nosec B101
+    assert "JAVA_PMD" in err  # nosec B101
+
+
+def test_lint_scan_broken_does_not_need_a_counts_file_at_all(capsys):
+    # A failed scan may never have written one; demanding the path would be a usage
+    # error raised at the exact moment the tool is being told the scan failed.
+    assert main(["lint", "--scan-broken", "--quiet"]) == 2  # nosec B101
+    assert main(["lint", "--quiet"]) == 2  # nosec B101
+    assert "--counts is required" in capsys.readouterr().err  # nosec B101

@@ -146,3 +146,22 @@ def test_report_only_names_baseline_mode_when_that_is_the_reason():
     out = render_quality_summary(_quality(net_new=2, fail_on="any", gate=False))
     assert "no diff to gate (baseline mode)" in out
     assert "`quality_fail_on` is" not in out
+
+
+def test_a_degraded_scan_says_so_next_to_the_count():
+    counts = parse_counts(
+        {
+            "schema_version": 1,
+            "net_new_count": 0,
+            "total_count": 0,
+            "pre_existing_count": 0,
+            "per_level_net_new": {},
+        }
+    )
+    decision = decide_quality_gate(counts, "any", scan_note="JAVA_PMD (no image known)")
+    out = render_quality_summary(decision)
+    assert "**Gate:** `pass`" in out
+    # ...but the pass is qualified, because a smaller scan reporting nothing and a clean
+    # repo produce the same zero.
+    assert "The scan was not complete" in out
+    assert "JAVA_PMD (no image known)" in out

@@ -226,7 +226,10 @@ outputs:
       measured.
     value: ${{ steps.brimyr.outputs.total_coverage }}
   quality_gate_result:
-    description: 'pass | fail for the quality half. Empty when quality is off.'
+    description: >-
+      pass | fail | error for the quality half — `error` when the scan did not complete,
+      which is the state a consumer most needs to notice: it is a tool error, not zero
+      findings. Empty when quality is off.
     value: ${{ steps.brimyr.outputs.quality_gate_result }}
   quality_net_new_count:
     description: 'Net-new (PR-introduced) quality findings. Empty when quality is off.'
@@ -389,6 +392,12 @@ runs:
     # run on the job's interpreter, so a nested setup would silently change the Python
     # that `brimyr ci` then runs pytest with. brimyr's setup-python has already run.
     #
+    # It does mean chargate pip-installs itself into the job's interpreter, which is the
+    # side effect brimyr's own venv installer (#32) exists to avoid. The cost is bounded
+    # and known rather than overlooked: chargate declares `dependencies = []` too, so
+    # this adds one package directory and one console script and resolves nothing. If
+    # that ever stops being true, this step needs its own venv the way brimyr's does.
+    #
     # continue-on-error: a MegaLinter or Docker failure must not take the coverage gate
     # down with it. It does NOT become a silent pass: the counts file is then missing,
     # and brimyr exits 2 saying it could not read it. A gate that cannot evaluate must
@@ -401,6 +410,13 @@ runs:
       with:
         checkout: 'false'
         setup_python: 'false'
+        # Load-bearing. Both tools resolve their own mode from GITHUB_EVENT_NAME when
+        # this is 'auto', which agrees — until someone forces `mode: pr` on a non-PR
+        # event (merge_group, push, workflow_dispatch), which this action documents as
+        # supported. Then brimyr would gate while chargate quietly ran a BASELINE scan,
+        # whose net-new set is empty by construction: a permanently clean quality half
+        # sitting next to a coverage gate that works, on every PR, forever.
+        mode: ${{ inputs.mode }}
         flavor: 'quality'
         standalone_linters: ${{ inputs.quality_linters }}
         fail_on: 'none'
@@ -447,6 +463,10 @@ runs:
         QUALITY_FINDINGS_IN: ${{ steps.quality.outputs.filtered_sarif_path }}
         # 'success' | 'failure' | 'skipped' — see the guard in the script below.
         QUALITY_OUTCOME_IN: ${{ steps.quality.outcome }}
+        # Linters chargate could not run, with a reason for each. Empty on a full scan.
+        # An exit-0 chargate run is NOT proof the scan was complete — a linter it
+        # declined to start reports nothing, which is what a clean repo also looks like.
+        QUALITY_SKIPPED_IN: ${{ steps.quality.outputs.linters_skipped }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER_IN: ${{ github.event.pull_request.number }}
@@ -514,6 +534,10 @@ runs:
           if [ "$QUALITY_OUTCOME_IN" = "success" ]; then
             args+=(--quality-counts "${QUALITY_COUNTS_IN:-chargate-reports/counts.json}")
             [ -n "$QUALITY_FINDINGS_IN" ] && args+=(--quality-findings "$QUALITY_FINDINGS_IN")
+            # A scan that ran fewer linters than asked is a smaller scan, and a smaller
+            # scan reporting nothing is indistinguishable from a clean one. Say so on
+            # the PR rather than letting it pass as a full result.
+            [ -n "$QUALITY_SKIPPED_IN" ] && args+=(--quality-scan-note "$QUALITY_SKIPPED_IN")
           else
             echo "::warning::Chargate quality scan did not complete (outcome:" \
               "$QUALITY_OUTCOME_IN) — reporting a tool error, not a clean quality half."

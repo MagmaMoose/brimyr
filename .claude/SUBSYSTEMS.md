@@ -84,7 +84,14 @@ really about.
   it checks whether the scan produced any runs, so a scan that found nothing leaves a
   well-formed row of zeros and only then exits 2. `action.yml` therefore trusts the
   chargate step's `outcome`, not the file, and passes `--quality-scan-broken` — which
-  skips every read and reports a tool error. Same rule as a broken test run.
+  skips every read and reports a tool error. Same rule as a broken test run. Either that
+  flag or `--quality-counts` turns the quality half on in `_run_flow_inner`.
+- **An exit-0 scan is not proof of a COMPLETE one.** chargate declines to start a linter
+  it has no image for (or that emits no SARIF) and still exits 0, so those findings are
+  simply absent — which is what a clean repo looks like. `linters_skipped` rides in on
+  `--quality-scan-note` (`--scan-note` on `brimyr lint`) and is stated next to the count.
+  It never gates: a smaller scan is not a failed one, but its number is not the whole
+  answer either.
 - **`fail_on` defaults to `none`, i.e. report-only, and the summary says so out loud.**
   MegaLinter's quality half over a mature repo is far denser than its security half, and
   a first PR going red with hundreds of findings is how a gate becomes decoration. The

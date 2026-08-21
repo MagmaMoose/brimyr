@@ -12,7 +12,7 @@ network or Actions code; that purity is what keeps it deterministic and testable
 already-parsed `filter-sarif` counts JSON it returns a verdict, so `cli.py` does every
 read and an unreadable or self-contradicting input is exit 2, never a pass. `cmd_lint`
 reaches it directly; `_run_flow` folds it into the same summary, comment and exit code as
-coverage when `--quality-counts` is given.
+coverage when `--quality-counts` **or** `--quality-scan-broken` is given.
 
 Edges inject their runner, so they test without a real toolchain: `git.py` (the only git
 boundary), `runner.py` (run tests, ingest). `sonar.py`, `sonar_dotnet.py`,

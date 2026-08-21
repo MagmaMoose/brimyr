@@ -20,9 +20,10 @@ folds its verdict into the same job summary and the same PR comment as coverage.
 !!! warning "The pinned Chargate ref does not ship this yet"
     `action.yml` pins `magmamoose/chargate@a852f9c` (v2.11.25), which predates the
     `quality` flavor. Until Chargate cuts the release that carries it and Brimyr's pin
-    is bumped, `quality: 'true'` fails the nested step and the run exits `2` saying it
-    could not read the counts file. That is the boundary working as designed: a gate
-    that cannot evaluate must not go green. Leave `quality` off until the pin moves.
+    is bumped, `quality: 'true'` fails the nested step, and Brimyr reports a scan that
+    did not complete: exit `2`, with `quality_gate_result` set to `error`. That is the
+    boundary working as designed: a gate that cannot evaluate must not go green. Leave
+    `quality` off until the pin moves.
 
 ## Brimyr calls Chargate; it does not share a library with it
 
@@ -128,6 +129,26 @@ Each of these would otherwise present as "0 net-new findings", which is
 indistinguishable from a clean PR. **Check the denominator before believing a good
 result.**
 
+## A scan that completed is not necessarily a full one
+
+An exit-`0` Chargate run is not proof the scan was **complete**. Chargate can decline to
+start a linter — no image for the runner's architecture, no SARIF output, the linter
+disabled — and still exit `0`. Whatever that linter would have reported is then simply
+absent from the count, and absent findings are exactly what a clean repository looks
+like.
+
+That shortfall is neither a failure nor a finding, so it is neither gated on nor
+swallowed: it is **said out loud**. Chargate names the linters it could not run, the
+action forwards that list as `--quality-scan-note` (`--scan-note` on `brimyr lint`), and
+the summary states it beside the number it qualifies:
+
+> ⚠️ **The scan was not complete** — these linters did not run: … Anything they would
+> have reported is missing from the count above.
+
+It never blocks. A missing linter image is not the pull request's fault, and failing on
+one would be its own kind of noise — but a count produced by half a scan must not be
+presented as though it were the whole answer.
+
 ## Running it without the action
 
 `brimyr lint` is the same gate over files you already have — Chargate's output from a
@@ -150,7 +171,19 @@ The nested Chargate step is `continue-on-error`: a MegaLinter or Docker failure 
 take the coverage gate down with it. That is the same contract as the
 [SonarQube](sonarqube.md) and [HTML report](html-report.md) legs.
 
-It stops there, and deliberately. A Chargate step that failed leaves no counts file, and
-Brimyr then exits `2` saying it could not read one. **A quality scan that never ran must
+It stops there, and deliberately. `action.yml` branches on the nested step's own
+`outcome`, and on anything other than `success` it hands Brimyr `--quality-scan-broken`
+instead of a counts path. That flag reads nothing at all: it reports a scan that did not
+complete — exit `2`, `quality_gate_result` `error`. **A quality scan that never ran must
 not read as a clean quality half** — it just should not also erase the half that did
 work.
+
+The outcome is what it trusts because the file proves nothing. `chargate ci` writes its
+counts JSON *before* it decides whether the scan produced any runs, so a scan that ran
+nothing leaves a well-formed **row of zeros** on disk and only then exits `2`. Read on
+its own, that document is indistinguishable from a clean pull request; the step's
+outcome is the only signal that tells the two apart.
+
+The other path is real, just not the one the action takes: a counts file passed
+explicitly to `brimyr lint --counts` that is missing or unreadable is still exit `2`,
+with a message saying it could not be read.

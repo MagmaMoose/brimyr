@@ -332,3 +332,22 @@ def test_a_broken_scan_is_not_the_same_as_a_clean_one():
     clean = decide_quality_gate(parse_counts(_counts(net_new=0, total=0, levels={})), "any")
     assert clean.exit_code == 0
     assert broken_decision("any").exit_code == 2
+
+
+# ── a completed scan is not necessarily a full one ──────────────────────────
+
+
+def test_a_scan_note_rides_along_and_never_gates():
+    # chargate exits 0 having declined to start a linter it has no image for. The
+    # findings that linter would have reported are simply absent, and absent findings
+    # are what a clean repo looks like — so the shortfall is stated, not gated on.
+    counts = parse_counts(_counts(net_new=0, total=0, levels={}))
+    decision = decide_quality_gate(counts, "any", scan_note="JAVA_PMD (no image)")
+    assert decision.scan_note == "JAVA_PMD (no image)"
+    assert decision.failed is False
+    assert decision.exit_code == 0
+
+
+def test_an_empty_scan_note_is_normalised_away():
+    decision = decide_quality_gate(parse_counts(_counts()), scan_note="   ")
+    assert decision.scan_note == ""

@@ -90,7 +90,8 @@ re-implement it: `action.yml` runs `magmamoose/chargate` as a nested step, and
 is the verdict's only input; the filtered SARIF is display-only, skimmed for the
 `path:line [rule]` strings the summary lists. Anything unreadable, unrecognised, or
 self-contradicting is exit `2`, because a half that cannot evaluate must not report a
-pass.
+pass — and so is a scan that never completed, which `action.yml` detects from the nested
+step's `outcome` and passes on as `--quality-scan-broken`, reading no file at all.
 
 `brimyr lint` runs that half on its own, under its own PR-comment marker.
 `brimyr ci --quality-counts` instead folds the same verdict into the one job summary

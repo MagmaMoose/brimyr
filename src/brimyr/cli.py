@@ -241,6 +241,7 @@ def _resolve_quality(
     *,
     gate: bool,
     scan_broken: bool = False,
+    scan_note: str = "",
 ) -> QualityDecision:
     """Read chargate's two output files and decide the quality verdict.
 
@@ -261,7 +262,7 @@ def _resolve_quality(
         sarif = _load_json(Path(findings_path), "findings SARIF")
         check_findings_consistent(counts, count_sarif_results(sarif))
         listing = read_finding_lines(sarif)
-    return decide_quality_gate(counts, fail_on, gate=gate, listing=listing)
+    return decide_quality_gate(counts, fail_on, gate=gate, listing=listing, scan_note=scan_note)
 
 
 def quality_to_dict(decision: QualityDecision) -> dict[str, object]:
@@ -277,6 +278,7 @@ def quality_to_dict(decision: QualityDecision) -> dict[str, object]:
         "blocking_count": decision.blocking,
         "gated": decision.gated,
         "gate_result": "error" if decision.broken else ("fail" if decision.failed else "pass"),
+        "scan_note": decision.scan_note,
         # The chargate schema this verdict was read from, echoed so a consumer of the
         # brimyr artifact can tell which side of the boundary produced the numbers.
         "counts_schema_version": counts.schema_version,
@@ -300,6 +302,8 @@ def _print_quality_summary(decision: QualityDecision) -> None:
             f"{name}={count}" for name, count in sorted(counts.per_level_net_new.items())
         )
         _eprint(f"brimyr: quality: net-new by level: {by_level}")
+    if decision.scan_note:
+        _warn(f"quality scan was not complete — these linters did not run: {decision.scan_note}")
     if not decision.gated:
         _eprint(f"brimyr: quality: report-only (fail_on={decision.fail_on}); not gating")
     elif decision.failed:
@@ -333,6 +337,11 @@ def _emit_quality_outputs(decision: QualityDecision) -> None:
 
 
 def cmd_lint(args: argparse.Namespace) -> int:
+    # Not an argparse `required=True`: --scan-broken reads nothing, so demanding a path
+    # to a file that a failed scan may never have written would be a usage error raised
+    # at exactly the moment the tool is being told the scan failed.
+    if not args.counts and not args.scan_broken:
+        return _fail("--counts is required (or --scan-broken, if the scan never ran)")
     try:
         decision = _resolve_quality(
             args.counts,
@@ -340,6 +349,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
             args.fail_on,
             gate=not args.no_gate,
             scan_broken=args.scan_broken,
+            scan_note=args.scan_note,
         )
     except QualityInputError as exc:
         return _fail(str(exc))
@@ -753,6 +763,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
                 args.quality_fail_on,
                 gate=mode.gates,
                 scan_broken=args.quality_scan_broken,
+                scan_note=args.quality_scan_note,
             )
         except QualityInputError as exc:
             # Exit 2, not a pass. An unreadable or self-contradicting input means the
@@ -940,6 +951,16 @@ def _add_quality_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--quality-scan-note",
+        default="",
+        metavar="TEXT",
+        help=(
+            "Linters the scan could not run, said out loud in the summary. A completed "
+            "scan is not necessarily a full one, and a smaller scan reporting nothing "
+            "looks exactly like a clean repo. Never gates."
+        ),
+    )
+    parser.add_argument(
         "--quality-scan-broken",
         action="store_true",
         help=(
@@ -1054,9 +1075,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lint.add_argument(
         "--counts",
-        required=True,
+        default="",
         metavar="PATH",
-        help="Chargate's `filter-sarif --counts-json` output. The gate's only input.",
+        help=(
+            "Chargate's `filter-sarif --counts-json` output. The gate's only input, and "
+            "required unless --scan-broken says there is nothing worth reading."
+        ),
     )
     lint.add_argument(
         "--findings",
@@ -1076,7 +1100,20 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {DEFAULT_FAIL_ON} = report-only)."
         ),
     )
-    lint.add_argument("--no-gate", action="store_true", help="Always exit 0 (report only).")
+    lint.add_argument(
+        "--no-gate",
+        action="store_true",
+        help=(
+            "Report only: findings never block. Does NOT suppress exit 2 — an input the "
+            "gate cannot evaluate is a tool error either way."
+        ),
+    )
+    lint.add_argument(
+        "--scan-note",
+        default="",
+        metavar="TEXT",
+        help="Linters the scan could not run, said out loud in the summary. Never gates.",
+    )
     lint.add_argument(
         "--scan-broken",
         action="store_true",
