@@ -1,6 +1,6 @@
 # Brimyr
 
-<!-- sources: README.md, src/brimyr/cli.py, action.yml -->
+<!-- sources: README.md, src/brimyr/cli.py, src/brimyr/quality.py, action.yml -->
 
 **Point Brimyr at any repo and it figures out the rest.** It detects the ecosystem,
 runs the test suite with coverage instrumentation on, and gates the pull request on
@@ -18,7 +18,9 @@ estate in several languages, that wiring *is* the project.
 
 Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
 is **security assurance**, and [Diatreme](https://github.com/MagmaMoose/diatreme)
-builds and releases. Twins, not competitors.
+builds and releases. Twins, not competitors — though coverage is only half of quality
+assurance, so Brimyr runs Chargate's *quality* linters for the other half rather than
+growing its own ([see below](#coverage-is-half-of-quality-assurance)).
 
 ## What it detects
 
@@ -57,6 +59,32 @@ You run the tests *with instrumentation on* (`pytest --cov`, `jest --coverage`,
 separate "measure coverage" pass. Brimyr detects the ecosystem and runs the right
 command; polyglot repos produce **one coverage file per language**, merged.
 
+## Coverage is half of quality assurance
+
+The other half is what the linters say. Set `quality: 'true'` and Brimyr also gates the
+**net-new quality findings** this pull request introduced, classified against the same
+diff the coverage gate uses, and folds that verdict into the same job summary and the
+same PR comment as coverage. The job exits on the worse of the two.
+
+Brimyr implements none of that classification. Chargate already owns a finished net-new
+engine, so Brimyr **calls it as a nested step** rather than sharing a library: a shared
+package would buy version skew, lockfile drift and a diamond dependency inside one job,
+and a subprocess in its own environment has none of those properties. Chargate's own
+`fail_on` is pinned to `none` there, so it can never set the job's exit code — it
+reports, Brimyr decides.
+
+`quality_fail_on` defaults to `none`, which makes it **report-only** until you say
+otherwise. MegaLinter's quality half over a mature repo is far denser than its security
+half, and a first PR that goes red with hundreds of findings is how a gate becomes
+decoration nobody reads. Ship it reporting, measure a release cycle, then pick a SARIF
+level. See [Quality findings](quality-findings.md).
+
+!!! warning "The pinned Chargate release does not ship the quality flavor yet"
+    `action.yml` pins Chargate at `v2.11.25`, which has no `quality` flavor, so
+    `quality: 'true'` cannot work until Chargate releases it and that pin is bumped.
+    Until then the nested step leaves no counts file behind and the run exits **2**:
+    a gate that cannot evaluate its input does not go green.
+
 ## Two surfaces, one CLI
 
 | Surface | What it is | When to use |
@@ -65,9 +93,10 @@ command; polyglot repos produce **one coverage file per language**, merged.
 | **pre-push hook** | `.pre-commit-hooks.yaml` (`brimyr` hook) | Catch a shortfall locally before pushing. |
 
 See [Setup & usage](setup.md) to wire one up, [Action reference](action.md) for every
-input and output, [Architecture](architecture.md) for how it fits together, and
-[Patch coverage](patch-coverage.md) for the precise classification rules. When
-something goes wrong, [Troubleshooting](troubleshooting.md).
+input and output, [Architecture](architecture.md) for how it fits together,
+[Patch coverage](patch-coverage.md) for the precise classification rules, and
+[Quality findings](quality-findings.md) for the other half. When something goes wrong,
+[Troubleshooting](troubleshooting.md).
 
 ## The PR comment
 

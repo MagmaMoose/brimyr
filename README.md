@@ -36,7 +36,10 @@ Free, MIT, and it runs entirely on your runner.
 Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
 is **security assurance**. They are twins, not competitors — Chargate gates net-new
 security findings, Brimyr gates the coverage of your change, and a repo wants both.
-[Diatreme](https://github.com/MagmaMoose/diatreme) builds and releases.
+[Diatreme](https://github.com/MagmaMoose/diatreme) builds and releases. Coverage is
+only half of quality assurance, though, so Brimyr can run Chargate's *quality* linters
+as a nested step rather than growing its own —
+[see below](#coverage-is-half-of-quality-assurance).
 
 It also does the thing SonarSource's own action declines to: **`SonarSource/sonarqube-scan-action`
 explicitly does not support .NET** and tells you to run SonarScanner for .NET
@@ -227,6 +230,37 @@ Coverage-report paths and `git diff` paths rarely match byte-for-byte (absolute 
 repo-relative, monorepo prefixes), so matching falls back from exact to suffix
 matching; pass `strip_prefix` to peel known roots.
 
+## Coverage is half of quality assurance
+
+The other half is what the linters say, so `quality: 'true'` adds a second gate: the
+**net-new quality findings** this pull request introduced, classified against the same
+diff the coverage gate uses. Details in [Quality findings](docs/quality-findings.md).
+
+Brimyr implements none of that classification. Chargate already owns a finished net-new
+engine, so Brimyr **calls it as a nested step** rather than sharing a library —
+MegaLinter's quality linters → SARIF → net-new against the diff — and reads the two
+files it leaves behind. A shared package would buy version skew, lockfile drift and a
+diamond dependency inside one job; a subprocess in its own environment has none of those
+properties. Chargate's own `fail_on` is pinned to `none` so it can never set the job's
+exit code: it reports, Brimyr decides. The verdict lands in the *same* job summary and
+the *same* PR comment as coverage, and the job exits on the worse of the two.
+
+`quality_fail_on` defaults to `none` — **report-only, deliberately**. MegaLinter's
+quality half over a mature repo is far denser than its security half, and a first PR
+that goes red with hundreds of findings is how a gate becomes decoration nobody reads.
+Ship it reporting, measure a release cycle, then pick a level: `note`, `warning`,
+`error` or `any`. Those are SARIF *levels*, not Chargate's severity bands: Chargate
+gates on per-result verdicts, where a missing `security-severity` falls back to the
+level, but Brimyr reads only the counts document, whose per-severity maps are populated
+solely from that property — which quality linters essentially never emit. A band-valued
+threshold read off it would sit there never blocking anything.
+
+> ⚠️ **The pinned Chargate release does not ship the quality flavor yet.** `action.yml`
+> pins Chargate at `v2.11.25`, which has no `quality` flavor, so `quality: 'true'`
+> cannot work until Chargate releases it and that pin is bumped. Until then the nested
+> step leaves no counts file behind and the run exits **2** rather than reporting a
+> clean scan.
+
 ## SonarQube
 
 Optional and non-blocking, and it **actually installs a scanner** — set `sonar_url`
@@ -264,10 +298,13 @@ brimyr ci --mode auto --sonar-url https://sonar.example.com --sonar-project-key 
 
 # Local pre-push check against the default branch.
 brimyr local
+
+# The quality half on its own: gate the net-new findings Chargate classified.
+brimyr lint --counts chargate-reports/counts.json --fail-on error
 ```
 
-Exit codes: `0` pass · `1` patch coverage below threshold · `2` broken test run /
-setup error.
+Exit codes: `0` pass · `1` patch coverage below threshold, or blocking quality
+findings · `2` broken test run / setup error.
 
 ## Modes
 
@@ -287,6 +324,7 @@ Full docs at [`./docs`](docs/index.md), built with MkDocs.
 | [Action reference](docs/action.md) | Every input and output, with real defaults |
 | [CLI reference](docs/cli.md) | Every command and flag |
 | [Patch coverage](docs/patch-coverage.md) | What counts, what doesn't, and why |
+| [Quality findings](docs/quality-findings.md) | The quality half: Chargate as a nested step, and what blocks |
 | [SonarQube](docs/sonarqube.md) | The Sonar leg, including the .NET wrap |
 | [Troubleshooting](docs/troubleshooting.md) | Symptom, cause, fix |
 | [Architecture](docs/architecture.md) | Pure core, side-effecting edges |

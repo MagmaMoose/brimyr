@@ -9,6 +9,9 @@ Subcommands:
   compute patch coverage, gate, run sonar-scanner, ship).
 * ``brimyr local`` — the same flow against a locally inferred base, to check a
   branch before pushing.
+* ``brimyr lint`` — gate on the net-new *quality* findings Chargate classified
+  (``chargate filter-sarif`` writes them; brimyr decides pass/fail). Report-only
+  unless ``--fail-on`` says otherwise.
 * ``brimyr version`` — print the version.
 
 Exit codes: ``0`` pass · ``1`` patch coverage below threshold · ``2`` broken test
@@ -23,6 +26,7 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from brimyr import __version__, broker_client, html_report, sonar_dotnet
 from brimyr import git as bgit
@@ -49,6 +53,18 @@ from brimyr.gate import (
 )
 from brimyr.local import resolve_local_base
 from brimyr.modes import Mode, resolve_mode
+from brimyr.quality import (
+    DEFAULT_FAIL_ON,
+    FAIL_ON_CHOICES,
+    QualityDecision,
+    QualityInputError,
+    broken_decision,
+    check_findings_consistent,
+    count_sarif_results,
+    decide_quality_gate,
+    parse_counts,
+    read_finding_lines,
+)
 from brimyr.runner import IngestError, RunResult, ingest_file, run_command, run_tests
 
 _EXT_FORMAT = {
@@ -201,6 +217,147 @@ def _emit_outputs(decision: GateDecision, *, mode: Mode | None, broken: bool) ->
     if mode is not None:
         pairs["mode"] = mode.value
     report_mod.write_outputs(pairs)
+
+
+# ── quality: gate on the net-new findings Chargate classified ────────────────
+
+
+def _load_json(path: Path, what: str) -> Any:
+    """Read a JSON document, turning every failure into one usable message."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise QualityInputError(f"could not read {what} {path}: {exc}") from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise QualityInputError(f"{what} {path} is not valid JSON: {exc}") from exc
+
+
+def _resolve_quality(
+    counts_path: str,
+    findings_path: str,
+    fail_on: str,
+    *,
+    gate: bool,
+    scan_broken: bool = False,
+) -> QualityDecision:
+    """Read chargate's two output files and decide the quality verdict.
+
+    Raises :class:`QualityInputError` on anything it cannot evaluate — an unreadable
+    file, an unrecognised ``schema_version``, or a filtered SARIF whose result count
+    contradicts the counts JSON. The caller maps that to exit 2, never to a pass.
+
+    ``scan_broken`` short-circuits every read. `chargate ci` writes its counts JSON
+    before it decides whether the scan produced anything, so a failed scan can leave a
+    well-formed row of zeros behind — and reading it would report a clean quality half
+    over a scan that never happened.
+    """
+    if scan_broken:
+        return broken_decision(fail_on)
+    counts = parse_counts(_load_json(Path(counts_path), "counts JSON"))
+    listing: tuple[str, ...] = ()
+    if findings_path:
+        sarif = _load_json(Path(findings_path), "findings SARIF")
+        check_findings_consistent(counts, count_sarif_results(sarif))
+        listing = read_finding_lines(sarif)
+    return decide_quality_gate(counts, fail_on, gate=gate, listing=listing)
+
+
+def quality_to_dict(decision: QualityDecision) -> dict[str, object]:
+    counts = decision.counts
+    return {
+        "net_new_count": counts.net_new,
+        "total_count": counts.total,
+        "pre_existing_count": counts.pre_existing,
+        "suppressed_count": counts.suppressed,
+        "per_level_net_new": dict(counts.per_level_net_new),
+        "per_level_total": dict(counts.per_level_total),
+        "fail_on": decision.fail_on,
+        "blocking_count": decision.blocking,
+        "gated": decision.gated,
+        "gate_result": "error" if decision.broken else ("fail" if decision.failed else "pass"),
+        # The chargate schema this verdict was read from, echoed so a consumer of the
+        # brimyr artifact can tell which side of the boundary produced the numbers.
+        "counts_schema_version": counts.schema_version,
+    }
+
+
+def _print_quality_summary(decision: QualityDecision) -> None:
+    if decision.broken:
+        _eprint(
+            "brimyr: quality: BROKEN scan — Chargate errored or produced no report. "
+            "This is a tool error (build red), not zero net-new findings."
+        )
+        return
+    counts = decision.counts
+    _eprint(
+        f"brimyr: quality: net-new {counts.net_new} / {counts.total} total "
+        f"({counts.pre_existing} pre-existing, never blocking)"
+    )
+    if counts.per_level_net_new:
+        by_level = ", ".join(
+            f"{name}={count}" for name, count in sorted(counts.per_level_net_new.items())
+        )
+        _eprint(f"brimyr: quality: net-new by level: {by_level}")
+    if not decision.gated:
+        _eprint(f"brimyr: quality: report-only (fail_on={decision.fail_on}); not gating")
+    elif decision.failed:
+        _eprint(
+            f"brimyr: quality: BLOCKING {decision.blocking} net-new finding(s) "
+            f"at or above {decision.fail_on}:"
+        )
+        for entry in decision.listing:
+            _eprint(f"  - {entry}")
+        if decision.listing_truncated:
+            _eprint(f"  - … and {decision.listing_truncated} more")
+    else:
+        _eprint(f"brimyr: quality: no net-new findings at or above {decision.fail_on}")
+
+
+def _emit_quality_outputs(decision: QualityDecision) -> None:
+    result = "error" if decision.broken else ("fail" if decision.failed else "pass")
+    report_mod.write_outputs(
+        {
+            "quality_gate_result": result,
+            "quality_gate_failed": "true" if (decision.broken or decision.failed) else "false",
+            "quality_net_new_count": str(decision.counts.net_new),
+            "quality_total_count": str(decision.counts.total),
+            "quality_blocking_count": str(decision.blocking),
+            # Echoed so a downstream `if` can tell a report-only run from a passing
+            # one — with `fail_on: none` both report `pass`, and they are not the
+            # same thing.
+            "quality_fail_on": decision.fail_on,
+        }
+    )
+
+
+def cmd_lint(args: argparse.Namespace) -> int:
+    try:
+        decision = _resolve_quality(
+            args.counts,
+            args.findings or "",
+            args.fail_on,
+            gate=not args.no_gate,
+            scan_broken=args.scan_broken,
+        )
+    except QualityInputError as exc:
+        return _fail(str(exc))
+
+    if args.json_out:
+        Path(args.json_out).write_text(
+            json.dumps(quality_to_dict(decision), indent=2), encoding="utf-8"
+        )
+
+    summary = report_mod.render_quality_summary(decision)
+    report_mod.append_step_summary(summary)
+    comment_message = _maybe_post_comment(args, summary, marker=comment_mod.QUALITY_MARKER)
+    if not args.quiet:
+        if comment_message:
+            _eprint(f"brimyr: {comment_message}")
+        _print_quality_summary(decision)
+    _emit_quality_outputs(decision)
+    return decision.exit_code
 
 
 # ── coverage: the pure patch-coverage computation ────────────────────────────
@@ -411,7 +568,12 @@ def _maybe_render_html(args: argparse.Namespace, coverage_paths: list[str]) -> s
     return result.message
 
 
-def _maybe_post_comment(args: argparse.Namespace, summary: str) -> str | None:
+def _maybe_post_comment(
+    args: argparse.Namespace,
+    summary: str,
+    *,
+    marker: str = comment_mod.SUMMARY_MARKER,
+) -> str | None:
     """Post the PR comment when asked. Failure-isolated: never changes the verdict."""
     if not getattr(args, "pr_comment", False):
         return None
@@ -429,7 +591,7 @@ def _maybe_post_comment(args: argparse.Namespace, summary: str) -> str | None:
         pr_number=number or 0,
         token=token,
     )
-    result = comment_mod.post_pr_comment(config, summary)
+    result = comment_mod.post_pr_comment(config, summary, marker=marker)
     return f"{result.message}{byline}"
 
 
@@ -578,19 +740,51 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
             json.dumps(counts_to_dict(decision), indent=2), encoding="utf-8"
         )
 
+    # The quality half, when Chargate ran ahead of us and left its two files behind.
+    # Rendered into the SAME summary and the SAME comment as coverage — one consolidated
+    # view is the whole point of brimyr owning the quality product rather than chargate
+    # growing a second gate.
+    quality = None
+    if getattr(args, "quality_counts", "") or getattr(args, "quality_scan_broken", False):
+        try:
+            quality = _resolve_quality(
+                args.quality_counts,
+                args.quality_findings or "",
+                args.quality_fail_on,
+                gate=mode.gates,
+                scan_broken=args.quality_scan_broken,
+            )
+        except QualityInputError as exc:
+            # Exit 2, not a pass. An unreadable or self-contradicting input means the
+            # gate cannot evaluate, and a gate that cannot evaluate must not go green.
+            return _fail(str(exc))
+        if args.quality_json_out:
+            Path(args.quality_json_out).write_text(
+                json.dumps(quality_to_dict(quality), indent=2), encoding="utf-8"
+            )
+
     summary = report_mod.render_summary(
         decision, mode, broken=broken, ecosystems=ecosystems, sonar_message=sonar_message
     )
+    if quality is not None:
+        summary = f"{summary}\n{report_mod.render_quality_summary(quality)}"
     report_mod.append_step_summary(summary)
     comment_message = _maybe_post_comment(args, summary)
     if not args.quiet:
         if comment_message:
             _eprint(f"brimyr: {comment_message}")
         _print_summary(decision, broken=broken)
+        if quality is not None:
+            _print_quality_summary(quality)
         if sonar_message:
             _eprint(f"brimyr: SonarQube: {sonar_message}")
     _emit_outputs(decision, mode=mode, broken=broken)
-    return decision.exit_code
+    if quality is not None:
+        _emit_quality_outputs(quality)
+    # Worst verdict wins, on the shared 0 < 1 < 2 scale: a broken test run still
+    # reports 2 even when quality is clean, and clean coverage does not launder a
+    # blocking quality finding.
+    return max(decision.exit_code, quality.exit_code if quality else 0)
 
 
 def cmd_ci(args: argparse.Namespace) -> int:
@@ -714,6 +908,51 @@ def _add_comment_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_quality_args(parser: argparse.ArgumentParser) -> None:
+    """Flags that fold a Chargate quality scan into the coverage run's one report."""
+    parser.add_argument(
+        "--quality-counts",
+        default="",
+        metavar="PATH",
+        help=(
+            "Chargate's `filter-sarif --counts-json` output. Supplying it turns on the "
+            "quality gate and adds its verdict to the same summary and PR comment."
+        ),
+    )
+    parser.add_argument(
+        "--quality-findings",
+        default="",
+        metavar="PATH",
+        help=(
+            "Chargate's `filter-sarif --out` net-new SARIF. Optional, and read only to "
+            "list findings in the summary — the verdict comes from --quality-counts. "
+            "A result count that contradicts the counts JSON is a hard error (exit 2)."
+        ),
+    )
+    parser.add_argument(
+        "--quality-fail-on",
+        choices=list(FAIL_ON_CHOICES),
+        default=DEFAULT_FAIL_ON,
+        help=(
+            "SARIF level at or above which a net-new quality finding blocks "
+            f"(default: {DEFAULT_FAIL_ON} = report-only). `any` blocks on every net-new "
+            "finding, including unlevelled ones."
+        ),
+    )
+    parser.add_argument(
+        "--quality-scan-broken",
+        action="store_true",
+        help=(
+            "The quality scan did not complete. Skips every read and reports a tool "
+            "error (exit 2) — the counts file a failed scan leaves behind is a row of "
+            "zeros, which is what a clean PR looks like."
+        ),
+    )
+    parser.add_argument(
+        "--quality-json-out", default="", help="Write the quality summary as JSON here."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brimyr",
@@ -778,6 +1017,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_sonar_args(ci)
     _add_comment_args(ci)
+    _add_quality_args(ci)
     ci.set_defaults(func=cmd_ci)
 
     local = sub.add_parser(
@@ -800,7 +1040,55 @@ def build_parser() -> argparse.ArgumentParser:
     local.add_argument("--test-command", help="Override the detected test command.")
     _add_sonar_args(local)
     _add_comment_args(local)
+    _add_quality_args(local)
     local.set_defaults(func=cmd_local)
+
+    lint = sub.add_parser(
+        "lint",
+        help="Gate on the net-new quality findings Chargate classified.",
+        description=(
+            "Read `chargate filter-sarif`'s counts JSON (and, optionally, its net-new "
+            "SARIF) and decide pass/fail on brimyr's own threshold. Chargate reports; "
+            "brimyr gates. Runs no linter and parses no diff."
+        ),
+    )
+    lint.add_argument(
+        "--counts",
+        required=True,
+        metavar="PATH",
+        help="Chargate's `filter-sarif --counts-json` output. The gate's only input.",
+    )
+    lint.add_argument(
+        "--findings",
+        default="",
+        metavar="PATH",
+        help=(
+            "Chargate's `filter-sarif --out` net-new SARIF. Read only to list findings "
+            "in the summary; a count that contradicts --counts is a hard error (exit 2)."
+        ),
+    )
+    lint.add_argument(
+        "--fail-on",
+        choices=list(FAIL_ON_CHOICES),
+        default=DEFAULT_FAIL_ON,
+        help=(
+            "SARIF level at or above which a net-new finding blocks "
+            f"(default: {DEFAULT_FAIL_ON} = report-only)."
+        ),
+    )
+    lint.add_argument("--no-gate", action="store_true", help="Always exit 0 (report only).")
+    lint.add_argument(
+        "--scan-broken",
+        action="store_true",
+        help=(
+            "The scan that produced these files did not complete. Reports a tool error "
+            "(exit 2) without reading them."
+        ),
+    )
+    lint.add_argument("--json-out", help="Write the quality summary as JSON here.")
+    lint.add_argument("--quiet", action="store_true", help="Suppress the human summary.")
+    _add_comment_args(lint)
+    lint.set_defaults(func=cmd_lint)
 
     version = sub.add_parser("version", help="Print the brimyr version.")
     version.set_defaults(func=cmd_version)

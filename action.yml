@@ -154,6 +154,41 @@ inputs:
     required: false
     default: 'brimyr-coverage'
 
+  # ── Quality findings (optional, via Chargate) ────────────────────────────
+  # Brimyr is quality assurance, and coverage is only half of that. Chargate already owns
+  # a finished net-new engine, so this CALLS it across a process boundary rather than
+  # sharing a library — MagmaMoose/brimyr#33. Chargate reports; brimyr gates.
+  quality:
+    description: >-
+      Also gate on net-new QUALITY findings. Runs Chargate as a nested step (MegaLinter's
+      quality linters -> SARIF -> net-new classification against this PR's diff), then
+      brimyr decides pass/fail on quality_fail_on and folds the verdict into the same job
+      summary and the same PR comment as coverage. Off by default; needs Docker on the
+      runner. Report-only even when on, until you set quality_fail_on.
+    required: false
+    default: 'false'
+  quality_fail_on:
+    description: >-
+      SARIF level at or above which a net-new quality finding blocks: none (default --
+      report-only) | note | warning | error | any. Deliberately `none` out of the box:
+      MegaLinter's quality half over a mature repo is dense, and a first PR that goes red
+      with hundreds of findings is how a gate becomes decoration nobody reads. Measure a
+      release cycle, then pick a level. `error` is the equivalent of Chargate `fail_on: high`.
+    required: false
+    default: 'none'
+  quality_linters:
+    description: >-
+      Comma-separated MegaLinter linter keys to run instead of Chargate's curated
+      `quality` set (GO_GOLANGCI_LINT, JAVASCRIPT_ES, JAVA_PMD, PYTHON_RUFF,
+      TYPESCRIPT_ES). A linter that emits no SARIF is invisible to the gate, and Chargate
+      skips it by name with a reason rather than running it for nothing.
+    required: false
+    default: ''
+  quality_json_artifact_name:
+    description: 'Artifact name for the quality JSON summary (uploaded when quality is on).'
+    required: false
+    default: 'brimyr-quality'
+
   python_version:
     description: >-
       Python version used to run the brimyr CLI. NOTE: `actions/setup-python` changes the
@@ -190,6 +225,20 @@ outputs:
       the report and therefore absent from this denominator. Empty when nothing was
       measured.
     value: ${{ steps.brimyr.outputs.total_coverage }}
+  quality_gate_result:
+    description: 'pass | fail for the quality half. Empty when quality is off.'
+    value: ${{ steps.brimyr.outputs.quality_gate_result }}
+  quality_net_new_count:
+    description: 'Net-new (PR-introduced) quality findings. Empty when quality is off.'
+    value: ${{ steps.brimyr.outputs.quality_net_new_count }}
+  quality_blocking_count:
+    description: 'Net-new quality findings at or above quality_fail_on.'
+    value: ${{ steps.brimyr.outputs.quality_blocking_count }}
+  quality_fail_on:
+    # With `fail_on: none` a report-only run and a genuinely clean one both report
+    # `pass`. They are not the same thing, so the threshold ships alongside the verdict.
+    description: 'The quality threshold that was in force. Empty when quality is off.'
+    value: ${{ steps.brimyr.outputs.quality_fail_on }}
 
 runs:
   using: composite
@@ -325,6 +374,43 @@ runs:
         echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
         echo "using reportgenerator"
 
+    # The other half of quality assurance, run by the tool that already owns a finished
+    # net-new engine. Deliberately a nested composite action and not a shared package:
+    # every argument against sharing one (version skew, uv.lock drift, a diamond in one
+    # job, mutating a consumer's interpreter) is an argument about imports into a shared
+    # interpreter, and a subprocess in its own environment has none of those properties.
+    # Dependabot bumps the SHA below like every other pinned action. See brimyr#33.
+    #
+    # `fail_on: none` is load-bearing: Chargate must never set this job's exit code.
+    # It classifies and counts; brimyr reads the two files it leaves behind and decides.
+    #
+    # `setup_python: false` is also load-bearing. Chargate's own setup-python step would
+    # replace the job's interpreter with ITS default version — and the consumer's tests
+    # run on the job's interpreter, so a nested setup would silently change the Python
+    # that `brimyr ci` then runs pytest with. brimyr's setup-python has already run.
+    #
+    # continue-on-error: a MegaLinter or Docker failure must not take the coverage gate
+    # down with it. It does NOT become a silent pass: the counts file is then missing,
+    # and brimyr exits 2 saying it could not read it. A gate that cannot evaluate must
+    # not go green — it just should not also erase the half that did work.
+    - name: Quality findings (Chargate)
+      id: quality
+      if: ${{ inputs.quality == 'true' }}
+      continue-on-error: true
+      uses: magmamoose/chargate@a852f9c2ffff3973e6fa98745c457a675f5074e2 # v2.11.25
+      with:
+        checkout: 'false'
+        setup_python: 'false'
+        flavor: 'quality'
+        standalone_linters: ${{ inputs.quality_linters }}
+        fail_on: 'none'
+        pr_comment: 'false'
+        upload_github_sarif: 'false'
+        emit_sarif_artifact: 'false'
+        base_ref: ${{ inputs.base_ref }}
+        head_ref: ${{ inputs.head_ref }}
+        github_token: ${{ inputs.github_token }}
+
     - name: Brimyr gate
       id: brimyr
       shell: bash
@@ -355,6 +441,12 @@ runs:
         SONAR_ARGS_IN: ${{ inputs.sonar_args }}
         HTML_REPORT_IN: ${{ inputs.html_report }}
         PR_COMMENT_IN: ${{ inputs.pr_comment }}
+        QUALITY_IN: ${{ inputs.quality }}
+        QUALITY_FAIL_ON_IN: ${{ inputs.quality_fail_on }}
+        QUALITY_COUNTS_IN: ${{ steps.quality.outputs.counts_path }}
+        QUALITY_FINDINGS_IN: ${{ steps.quality.outputs.filtered_sarif_path }}
+        # 'success' | 'failure' | 'skipped' — see the guard in the script below.
+        QUALITY_OUTCOME_IN: ${{ steps.quality.outcome }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER_IN: ${{ github.event.pull_request.number }}
@@ -365,6 +457,9 @@ runs:
         json_abs="${GITHUB_WORKSPACE:-$PWD}/$json_rel"
         mkdir -p "$(dirname "$json_abs")"
         echo "json_path=$json_rel" >> "$GITHUB_OUTPUT"
+
+        quality_json_rel="brimyr-reports/quality.json"
+        quality_json_abs="${GITHUB_WORKSPACE:-$PWD}/$quality_json_rel"
 
         base="${BASE_REF_IN:-$PR_BASE_SHA}"
         head="${HEAD_REF_IN:-${PR_HEAD_SHA:-$GH_SHA}}"
@@ -403,6 +498,29 @@ runs:
           for a in "${_sa[@]}"; do [ -n "$a" ] && args+=(--sonar-arg "$a"); done
         fi
 
+        # Deliberately NOT guarded on the file existing. If the Chargate step failed
+        # (it is continue-on-error) the path is empty or the file is absent, and brimyr
+        # exits 2 saying so — which is the point. Skipping the flag here would turn a
+        # quality scan that never ran into a clean bill of health.
+        #
+        # And the file EXISTING is not proof the scan worked. `chargate ci` writes its
+        # counts JSON before it decides whether the scan produced any runs, so a scan
+        # that found nothing leaves a well-formed row of zeros on disk and only then
+        # exits 2 — which reads exactly like a clean pull request. The step's own
+        # outcome is the only thing that distinguishes them, so it is what we trust.
+        if [ "$QUALITY_IN" = "true" ]; then
+          echo "quality_json_path=$quality_json_rel" >> "$GITHUB_OUTPUT"
+          args+=(--quality-fail-on "$QUALITY_FAIL_ON_IN" --quality-json-out "$quality_json_abs")
+          if [ "$QUALITY_OUTCOME_IN" = "success" ]; then
+            args+=(--quality-counts "${QUALITY_COUNTS_IN:-chargate-reports/counts.json}")
+            [ -n "$QUALITY_FINDINGS_IN" ] && args+=(--quality-findings "$QUALITY_FINDINGS_IN")
+          else
+            echo "::warning::Chargate quality scan did not complete (outcome:" \
+              "$QUALITY_OUTCOME_IN) — reporting a tool error, not a clean quality half."
+            args+=(--quality-scan-broken)
+          fi
+        fi
+
         if [ "$PR_COMMENT_IN" = "true" ] && [ -n "${PR_NUMBER_IN:-}" ]; then
           args+=(--pr-comment --pr-number "$PR_NUMBER_IN")
           [ -n "$TOKEN_BROKER_URL_IN" ] && args+=(--token-broker-url "$TOKEN_BROKER_URL_IN")
@@ -430,3 +548,14 @@ runs:
       with:
         name: ${{ inputs.json_artifact_name }}
         path: ${{ steps.brimyr.outputs.json_path }}
+
+    - name: Upload quality JSON artifact
+      # hashFiles() guards it: on a run where the Chargate step failed, brimyr exited 2
+      # before writing this, and an upload step that fails on a missing file would bury
+      # the real error under a second one.
+      if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.quality_json_path != '' && hashFiles(steps.brimyr.outputs.quality_json_path) != '' }}
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.quality_json_artifact_name }}
+        path: ${{ steps.brimyr.outputs.quality_json_path }}

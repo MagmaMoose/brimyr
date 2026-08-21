@@ -1,11 +1,12 @@
 {
-  "generated": "2026-08-20",
-  "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports.",
+  "generated": "2026-08-21",
+  "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
     "src/brimyr/cli.py:cmd_ci",
     "src/brimyr/cli.py:cmd_coverage",
     "src/brimyr/cli.py:cmd_local",
+    "src/brimyr/cli.py:cmd_lint",
     "src/brimyr/cli.py:_run_flow",
     "action.yml:runs",
     ".pre-commit-hooks.yaml:brimyr",
@@ -14,15 +15,17 @@
   "modules": {
     "cli": {
       "path": "src/brimyr/cli.py",
-      "purpose": "argparse dispatch (coverage | ci | local | version) plus _run_flow \u2014 the single pipeline every surface executes: collect coverage -> compute the diff -> patch coverage -> gate -> summary/outputs -> optional PR comment.",
+      "purpose": "argparse dispatch (coverage | ci | local | lint | version) plus _run_flow \u2014 the single pipeline every surface executes: collect coverage -> compute the diff -> patch coverage -> gate -> summary/outputs -> optional PR comment. Also the ONLY reader of chargate's quality files: _resolve_quality loads them and quality.py decides, so the quality module itself stays pure.",
       "exports": [
         "main",
         "build_parser",
         "cmd_coverage",
         "cmd_ci",
         "cmd_local",
+        "cmd_lint",
         "cmd_version",
-        "counts_to_dict"
+        "counts_to_dict",
+        "quality_to_dict"
       ],
       "depends_on": [
         "broker_client",
@@ -37,6 +40,7 @@
         "gate",
         "local",
         "modes",
+        "quality",
         "runner"
       ]
     },
@@ -198,12 +202,13 @@
     },
     "github_comment": {
       "path": "src/brimyr/github_comment.py",
-      "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
+      "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER, or QUALITY_MARKER for a standalone `brimyr lint` run \u2014 two markers because the subcommands can run in either order and one shared marker would mean the later run erased the earlier verdict): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
       "exports": [
         "post_pr_comment",
         "CommentConfig",
         "CommentResult",
-        "SUMMARY_MARKER"
+        "SUMMARY_MARKER",
+        "QUALITY_MARKER"
       ],
       "depends_on": []
     },
@@ -233,6 +238,25 @@
         "coverage.patch"
       ]
     },
+    "quality": {
+      "path": "src/brimyr/quality.py",
+      "purpose": "PURE. Turns chargate's `filter-sarif --counts-json` document plus a fail_on level into a QualityDecision and the process exit code. The counts JSON is the gate's ONLY input; the filtered SARIF is display-only (read_finding_lines skims `path:line [rule]` strings, capped at 20) and never feeds the verdict \u2014 classifying a SARIF result is chargate's job, and a second implementation here is the coupling the process boundary exists to avoid. fail_on speaks SARIF LEVELS (none|note|warning|error|any), not chargate's severity bands, because quality linters essentially never emit security-severity and a band threshold would silently never block; `error` == chargate's `fail_on: high`. Defaults to `none` = report-only. QualityInputError (exit 2, never a pass) on an unreadable file, a missing or unsupported schema_version, counts that disagree with themselves (sum(per_level_net_new) != net_new_count), or a filtered SARIF whose result count contradicts net_new_count.",
+      "exports": [
+        "parse_counts",
+        "decide_quality_gate",
+        "QualityCounts",
+        "QualityDecision",
+        "QualityInputError",
+        "count_sarif_results",
+        "read_finding_lines",
+        "check_findings_consistent",
+        "SUPPORTED_COUNTS_SCHEMA_VERSIONS",
+        "FAIL_ON_CHOICES",
+        "DEFAULT_FAIL_ON",
+        "BAND_EQUIVALENT"
+      ],
+      "depends_on": []
+    },
     "modes": {
       "path": "src/brimyr/modes.py",
       "purpose": "Mode.PR (gates) vs Mode.BASELINE (report-only), resolved from an explicit --mode or GITHUB_EVENT_NAME. Mode.gates is the single switch the flow reads.",
@@ -244,16 +268,18 @@
     },
     "report": {
       "path": "src/brimyr/report.py",
-      "purpose": "Renders the Markdown summary (verdict, percentage, per-file misses, ecosystems, Sonar note) and writes GITHUB_STEP_SUMMARY / GITHUB_OUTPUT. That same Markdown is reused verbatim as the PR comment body, so there is one renderer and the two can never disagree. No-ops cleanly off CI.",
+      "purpose": "Renders the Markdown summary (verdict, percentage, per-file misses, ecosystems, Sonar note) and writes GITHUB_STEP_SUMMARY / GITHUB_OUTPUT. That same Markdown is reused verbatim as the PR comment body, so there is one renderer and the two can never disagree. render_quality_summary renders the quality block the same way \u2014 standalone under `brimyr lint`, appended below the coverage table under `brimyr ci --quality-counts`. Summary only, never inline per-finding comments: quality findings are dense and two hundred inline comments is how a gate gets switched off. No-ops cleanly off CI.",
       "exports": [
         "render_summary",
+        "render_quality_summary",
         "append_step_summary",
         "write_outputs"
       ],
       "depends_on": [
         "detect",
         "gate",
-        "modes"
+        "modes",
+        "quality"
       ]
     },
     "local": {
@@ -266,7 +292,7 @@
     },
     "surface.action": {
       "path": "action.yml",
-      "purpose": "Composite GitHub Action wrapping `brimyr ci`: inputs mirror the CLI flags (mode, threshold, ecosystem, sonar-*, pr_comment, github_token, token_broker_url), outputs mirror the gate outputs.",
+      "purpose": "Composite GitHub Action wrapping `brimyr ci`: inputs mirror the CLI flags (mode, threshold, ecosystem, sonar-*, pr_comment, github_token, token_broker_url, and the quality-* set), outputs mirror the gate outputs. When `quality: true` it first runs magmamoose/chargate as a nested step (flavor: quality, continue-on-error, its own fail_on: none) and passes that step's counts_path / filtered_sarif_path into `brimyr ci --quality-counts`. The pinned chargate ref must contain the `quality` flavor for that to work \u2014 see .claude/SUBSYSTEMS.md.",
       "exports": [
         "inputs",
         "outputs",
@@ -403,7 +429,8 @@
         "local",
         "modes",
         "github_comment",
-        "broker_client"
+        "broker_client",
+        "quality"
       ]
     }
   },
@@ -427,12 +454,36 @@
         "coverage.patch.compute_patch_coverage",
         "gate.decide_gate",
         "cli._maybe_run_sonar",
+        "cli._resolve_quality",
         "report.render_summary",
         "report.append_step_summary",
         "cli._maybe_post_comment",
         "cli._emit_outputs"
       ],
-      "note": "The whole product in ~45 lines \u2014 read this before anything else. Baseline mode and broken runs skip the diff and gate on an empty DiffIndex. The comment is posted after the summary is rendered, because it IS the summary."
+      "note": "The whole product in ~45 lines \u2014 read this before anything else. Baseline mode and broken runs skip the diff and gate on an empty DiffIndex. The comment is posted after the summary is rendered, because it IS the summary. With --quality-counts, _resolve_quality runs before the summary is rendered so its block joins the SAME body, and the return value is max(coverage, quality) on the 0<1<2 scale."
+    },
+    {
+      "caller": "cli.cmd_lint",
+      "calls": [
+        "cli._resolve_quality",
+        "report.render_quality_summary",
+        "report.append_step_summary",
+        "cli._maybe_post_comment",
+        "cli._emit_quality_outputs"
+      ],
+      "note": "The standalone quality half. Runs no linter and parses no diff \u2014 chargate already did both. _resolve_quality raises QualityInputError on anything it cannot evaluate and the command returns exit 2; it never degrades to a pass. The comment goes under github_comment.QUALITY_MARKER, not the coverage marker."
+    },
+    {
+      "caller": "cli._resolve_quality",
+      "calls": [
+        "cli._load_json",
+        "quality.parse_counts",
+        "quality.count_sarif_results",
+        "quality.check_findings_consistent",
+        "quality.read_finding_lines",
+        "quality.decide_quality_gate"
+      ],
+      "note": "The whole process boundary to chargate, in six calls. cli.py does every read; quality.py sees only parsed JSON. check_findings_consistent is what stops a dropped or stale SARIF reading as a comfortable '0 findings'."
     },
     {
       "caller": "cli._maybe_post_comment",
