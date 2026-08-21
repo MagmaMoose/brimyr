@@ -39,7 +39,7 @@ def render_summary(
         status = "`pass`"
 
     detected = ", ".join(eco.label for eco in ecosystems) or "—"
-    lines: list[str] = ["## 🟣 Brimyr — patch coverage", ""]
+    lines: list[str] = ["## Brimyr: Quality Assurance", ""]
     lines.append(f"**Mode:** `{mode.value}` · **Gate:** {status} · **Ecosystem:** {detected}")
     lines.append("")
 
