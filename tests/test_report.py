@@ -69,4 +69,4 @@ def test_summary_heading(make_report):
     decision = _decision(make_report, 9, 10)
     out = render_summary(decision, Mode.PR)
     first_line = out.split("\n")[0]
-    assert first_line == "## Brimyr: Quality Assurance"
+    assert first_line == "## Brimyr: Quality Assurance"  # nosec B101
