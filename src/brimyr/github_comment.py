@@ -35,6 +35,14 @@ from brimyr import __version__
 # recognise the comment it owns. Deliberately namespaced to brimyr.
 SUMMARY_MARKER = "<!-- brimyr:pr-summary -->"
 
+# `brimyr lint` run on its own owns a SECOND comment, under its own marker. It is a
+# separate marker and not a second body under the first because the two subcommands can
+# run in either order (or only one of them), and sharing a marker would mean whichever
+# ran last silently erased the other's verdict. `brimyr ci --quality-counts` renders both
+# verdicts into ONE body under SUMMARY_MARKER — that is the consolidated view, and the
+# reason to prefer it.
+QUALITY_MARKER = "<!-- brimyr:quality-summary -->"
+
 _USER_AGENT = f"brimyr/{__version__} (+https://github.com/MagmaMoose/brimyr)"
 _API_VERSION = "2022-11-28"
 # Cap pagination so a pathological PR can't loop forever (100/page -> 2000 comments).
@@ -122,11 +130,11 @@ def _http_detail(exc: urllib.error.HTTPError) -> str:
     return f"HTTP {exc.code}: {body}".strip()
 
 
-def _find_prior(api: _GitHubAPI, config: CommentConfig) -> int | None:
-    """The id of the comment this tool owns on that PR, if it posted one before."""
+def _find_prior(api: _GitHubAPI, config: CommentConfig, marker: str) -> int | None:
+    """The id of the comment ``marker`` owns on that PR, if it posted one before."""
     list_url = config.repo_path(f"/issues/{config.pr_number}/comments")
     for comment in api.paginate(list_url):
-        if SUMMARY_MARKER in (comment.get("body") or "") and isinstance(comment.get("id"), int):
+        if marker in (comment.get("body") or "") and isinstance(comment.get("id"), int):
             return int(comment["id"])
     return None
 
@@ -135,12 +143,15 @@ def post_pr_comment(
     config: CommentConfig,
     body: str,
     *,
+    marker: str = SUMMARY_MARKER,
     opener: urllib.request.OpenerDirector | None = None,
 ) -> CommentResult:
     """Create or update the single brimyr comment on a PR. Never raises.
 
-    ``body`` is rendered Markdown; the marker is prepended here so a caller can
-    never forget it and orphan the previous comment.
+    ``body`` is rendered Markdown; ``marker`` is prepended here so a caller can
+    never forget it and orphan the previous comment. One marker, one comment — pass
+    :data:`QUALITY_MARKER` for a standalone ``brimyr lint`` run so it cannot overwrite
+    the coverage comment.
     """
     missing = config.missing()
     if missing:
@@ -150,11 +161,11 @@ def post_pr_comment(
             message=f"PR comment skipped — missing {', '.join(missing)}",
         )
 
-    marked = body if body.startswith(SUMMARY_MARKER) else f"{SUMMARY_MARKER}\n{body}"
+    marked = body if body.startswith(marker) else f"{marker}\n{body}"
     api = _GitHubAPI(config, opener)
 
     try:
-        prior = _find_prior(api, config)
+        prior = _find_prior(api, config, marker)
         if prior is not None:
             api.request("PATCH", config.repo_path(f"/issues/comments/{prior}"), {"body": marked})
             action = "updated"

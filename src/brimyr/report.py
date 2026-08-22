@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from brimyr.detect import Ecosystem
 from brimyr.gate import GateDecision
 from brimyr.modes import Mode
+from brimyr.quality import QualityDecision
 
 _MAX_MISSING_FILES = 20
 
@@ -139,3 +140,109 @@ def write_outputs(pairs: Mapping[str, str]) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         for key, value in pairs.items():
             handle.write(f"{key}={value}\n")
+
+
+def render_quality_summary(decision: QualityDecision) -> str:
+    """Render the Markdown block for one net-new quality run.
+
+    Used on its own by ``brimyr lint`` and appended below the coverage table by
+    ``brimyr ci`` — the same block either way, so the consolidated PR comment and the
+    standalone one never drift into two different vocabularies for one verdict.
+
+    **Summary only, never inline.** Chargate posts per-finding review comments because
+    security findings are sparse; quality findings are not, and a first PR with two
+    hundred inline comments is how a gate gets switched off. The listing is capped and
+    says so.
+    """
+    counts = decision.counts
+    if decision.broken:
+        status = "`error`"
+    elif decision.failed:
+        status = "`fail`"
+    elif not decision.gated:
+        status = "`report-only`"
+    else:
+        status = "`pass`"
+
+    # Sibling of `render_summary`'s heading, in the same `Brimyr: <thing>` shape (#37).
+    # Deliberately NOT "Brimyr: Quality" — the block above already carries the word
+    # "Quality", and a second one under it would read as a subsection of the first.
+    lines: list[str] = ["## Brimyr: Net-new findings", ""]
+    lines.append(f"**Gate:** {status} · **Blocks on:** `{decision.fail_on}`")
+    lines.append("")
+
+    if decision.broken:
+        # The same shape as the broken-test-run block above, for the same reason: the
+        # counts chargate leaves behind after a scan that found nothing are a well-formed
+        # row of zeros, and "0 net-new findings" is what a clean PR looks like.
+        lines.append(
+            "> ❌ **The quality scan did not complete** — Chargate errored or produced no "
+            "report. This is a tool error (build red), **not** zero net-new findings."
+        )
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| Net-new findings | **{counts.net_new}** |")
+    if decision.gated:
+        lines.append(f"| Blocking at `{decision.fail_on}` | {decision.blocking} |")
+    lines.append(f"| Pre-existing (never blocking) | {counts.pre_existing} |")
+    if counts.suppressed:
+        lines.append(f"| Suppressed in source (never blocking) | {counts.suppressed} |")
+    if counts.per_level_net_new:
+        by_level = ", ".join(
+            f"{name}={count}" for name, count in sorted(counts.per_level_net_new.items())
+        )
+        lines.append(f"| Net-new by level | {by_level} |")
+    lines.append("")
+
+    if not decision.gated:
+        # Say it, and say WHY. A report-only block that looks like a passing one is how,
+        # six weeks later, nobody can tell you whether quality is enforced — and naming
+        # the threshold when the real reason is baseline mode is its own wrong answer.
+        why = (
+            "this run has no diff to gate (baseline mode)"
+            if decision.reason == "baseline"
+            else f"`quality_fail_on` is `{decision.fail_on}`"
+        )
+        lines.append(
+            f"📋 Report-only — {why}, so findings are counted and shown but nothing blocks."
+        )
+        lines.append("")
+    elif decision.failed:
+        lines.append(
+            f"❌ **{decision.blocking} net-new finding(s) at or above `{decision.fail_on}`.**"
+        )
+        lines.append("")
+    elif counts.net_new:
+        lines.append(
+            f"✅ {counts.net_new} net-new finding(s), none at or above `{decision.fail_on}`."
+        )
+        lines.append("")
+    else:
+        lines.append("✅ No net-new quality findings.")
+        lines.append("")
+
+    if decision.scan_note:
+        # An exit-0 scan is not necessarily a complete one. Chargate says so on its own
+        # PR comments for the same reason: a scan that quietly got smaller and a repo
+        # that is genuinely clean produce the same number.
+        lines.append(
+            "⚠️ **The scan was not complete** — these linters did not run: "
+            f"{decision.scan_note}. Anything they would have reported is missing from "
+            "the count above."
+        )
+        lines.append("")
+
+    if decision.listing:
+        lines.append("<details><summary>Net-new findings</summary>")
+        lines.append("")
+        for entry in decision.listing:
+            lines.append(f"- `{entry}`")
+        if decision.listing_truncated:
+            lines.append(f"- … and {decision.listing_truncated} more")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    return "\n".join(lines)

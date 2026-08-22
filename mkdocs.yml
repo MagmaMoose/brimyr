@@ -34,6 +34,7 @@ nav:
   - Home: index.md
   - Architecture: architecture.md
   - Patch coverage: patch-coverage.md
+  - Quality findings: quality-findings.md
   - Setup & usage: setup.md
   - .NET solutions: dotnet.md
   - Java / JVM: java.md

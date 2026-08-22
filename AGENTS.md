@@ -10,7 +10,14 @@ changed** (diff-cover semantics, default 80%). Pre-existing uncovered code never
 Non-blocking alongside: total coverage, one PR comment, a SonarQube analysis. One CLI,
 two surfaces: `action.yml` and `.pre-commit-hooks.yaml`.
 
-**Exit codes:** `0` pass · `1` below threshold · `2` broken run / setup / usage error.
+Its other half gates net-new **quality** findings — brimyr does not lint: it calls
+`chargate filter-sarif` across a process boundary and gates on the counts JSON that run
+writes (`quality.py`, `brimyr lint`, or `brimyr ci --quality-counts` to fold the verdict
+into the one summary and the one PR comment coverage already writes). Report-only by
+default; `.claude/SUBSYSTEMS.md` before you touch it.
+
+**Exit codes:** `0` pass · `1` below threshold / blocking findings · `2` broken run /
+setup / usage error. When both halves run, the worse of the two wins.
 
 ## Commands
 
@@ -35,7 +42,8 @@ uv run --group docs mkdocs build       # render ./site (gitignored)
   Before adding or resizing anything billable, compute the worst case at the throttle
   ceiling and write it beside the setting.
 - **Nothing under `src/brimyr/coverage/` may do I/O** — no `subprocess`, `os`, network or
-  Actions code. That purity is the design.
+  Actions code. That purity is the design. `quality.py` holds to it too: `cli.py` reads
+  chargate's files, `quality.py` only decides.
 - Python ≥ 3.11, **uv + Ruff + pytest**, full type hints. Tests mirror modules 1:1
   under `tests/`. SHA-pin external Actions with `# vX.Y.Z`. MIT.
 
@@ -50,7 +58,7 @@ exit `2`, never 0% coverage. Check the denominator before believing a good resul
 
 - `./PROJECT_INDEX.json` — locating unfamiliar code. Read by path, never imported.
 - `.claude/COMMON_MISTAKES.md` — always-applicable footguns.
-- `.claude/SUBSYSTEMS.md` — Sonar, `broker/`, cost, CI gates, the shared diff corpus.
-  Read before touching any of them.
+- `.claude/SUBSYSTEMS.md` — Sonar, `broker/`, cost, the quality half, CI gates, the
+  shared diff corpus. Read before touching any of them.
 - `.claude/ARCHITECTURE_MAP.md` — the pure-core/edges shape.
 - `./docs` is published human documentation; `.claude/*.md` is terse agent context.

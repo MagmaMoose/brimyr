@@ -7,10 +7,15 @@ its tests **with coverage on**, gates **only on the lines the diff changed** (di
 default 80%). Pre-existing uncovered code never blocks. Non-blocking alongside: total
 coverage, one PR comment, a SonarQube analysis.
 
+Its other half gates net-new **quality** findings — brimyr does not lint: it calls
+`chargate filter-sarif` across a process boundary and gates on the counts JSON
+(`quality.py`, `brimyr lint`). Report-only by default.
+
 @.claude/QUICK_START.md
 @.claude/COMMON_MISTAKES.md
 
-**Exit codes:** `0` pass · `1` below threshold · `2` broken run / setup / usage error.
+**Exit codes:** `0` pass · `1` below threshold / blocking findings · `2` broken run /
+setup / usage error.
 
 ## Rules
 
@@ -19,10 +24,9 @@ coverage, one PR comment, a SonarQube analysis.
 - **Never hand-bump the version.** Diatreme + python-semantic-release cut `vX.Y.Z` from
   conventional commits on push to `main`. `release.yml` is caldrith's — tune it from
   `MagmaMoose/admin`, not here.
-- **[cost]: the AWS bill comes out of one person's salary.** Every infrastructure setting
-  is a spend control; default to the cheapest thing that works. Before adding or resizing
-  anything billable, compute the worst case at the throttle ceiling and write it beside
-  the setting. Numbers: `.claude/SUBSYSTEMS.md`.
+- **[cost]: the AWS bill comes out of one person's salary.** Default to the cheapest
+  thing that works, and price the worst case before adding anything billable. How, and
+  the numbers: `.claude/SUBSYSTEMS.md`.
 - Python ≥ 3.11, **uv + Ruff + pytest**, full type hints. Tests mirror modules 1:1
   under `tests/`. SHA-pin external Actions with `# vX.Y.Z`. MIT.
 
@@ -33,8 +37,8 @@ fail the gate. Start at `cli.py:_run_flow`.
 
 - Locating unfamiliar code → `./PROJECT_INDEX.json` first.
 - Shape and module roles → `.claude/ARCHITECTURE_MAP.md`.
-- Touching Sonar, `broker/`, cost, a CI gate or `tests/fixtures/diff_corpus/` →
-  `.claude/SUBSYSTEMS.md` **first**.
+- Touching Sonar, `broker/`, cost, the quality half, a CI gate or
+  `tests/fixtures/diff_corpus/` → `.claude/SUBSYSTEMS.md` **first**.
 - `.claude/decisions/` and `.claude/sessions/` only when the task relates to them.
 - `./docs` is published human docs; `.claude/*.md` is terse agent context.
 
@@ -51,5 +55,6 @@ fail the gate. Start at `cli.py:_run_flow`.
 - Architectural decision → `/adr`. Public behaviour/API/config changed → `/update-docs`.
 - `PROJECT_INDEX.json` stale after a new module or refactor: regenerate that section,
   bump `generated`.
-- Auto-loaded tier (this file + @-imports): currently ~1450 tokens, target ~1500. **Measure it** — words×1.3
-  under-reads this content ~40%. Move detail out, never delete it.
+- Auto-loaded tier (this file + @-imports): ~1500 tokens, at the ~1500 target.
+  **Measure it** — words×1.3 under-reads this content ~40%. Move detail out, never
+  delete it.

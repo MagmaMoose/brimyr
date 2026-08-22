@@ -1,6 +1,6 @@
 # Architecture
 
-<!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/runner.py, broker/app/broker.py -->
+<!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/quality.py, src/brimyr/runner.py, broker/app/broker.py -->
 
 Brimyr is one `brimyr` Python CLI (`src/brimyr/cli.py:main`) behind three GitHub
 surfaces. The design splits cleanly into a **pure core** and a thin set of
@@ -10,7 +10,7 @@ surfaces. The design splits cleanly into a **pure core** and a thin set of
 
 ```text
 src/brimyr/
-  cli.py          # argparse dispatch: coverage | ci | local | version
+  cli.py          # argparse dispatch: coverage | ci | local | lint | version
   coverage/       # ★ THE PURE CORE: deterministic, no I/O, heavily tested
     diff.py       #   unified-diff text -> DiffIndex (changed files + added line ranges)
     model.py      #   CoverageReport / FileCoverage + CoverageBuilder (covered-wins merge)
@@ -26,6 +26,7 @@ src/brimyr/
   sonar_dotnet.py # dotnet sonarscanner begin/end WRAPPING the build (.NET only)
   html_report.py  # ReportGenerator wrapper -> browsable HTML artifact (optional)
   gate.py         # patch % + threshold -> pass/fail + exit code
+  quality.py      # pure: chargate's net-new counts + fail_on level -> a verdict
   modes.py        # PR (gate) vs baseline (no gate) resolution
   report.py       # GitHub job summary + step outputs (also renders the PR comment)
   github_comment.py # marker-based upsert of the ONE PR comment (never raises)
@@ -39,9 +40,11 @@ src/brimyr/
 coverage report) and returns numbers. `git.py`, `runner.py`, `sonar.py`,
 `sonar_dotnet.py` and `html_report.py` are the only modules that shell out, and each
 injects its runner, so the core is unit-tested with synthetic diff text and coverage
-strings, no real repository or toolchain required. The two network edges, `github_comment.py` and `broker_client.py`, follow
-the same shape: stdlib `urllib` only, with the opener injected so the tests need no
-network, and neither ever raises out into the gate.
+strings, no real repository or toolchain required. `quality.py` is pure in the same
+way without living under `coverage/`: it is handed already-parsed JSON and returns a
+verdict, and `cli.py` does the reading. The two network edges, `github_comment.py` and
+`broker_client.py`, follow the same shape: stdlib `urllib` only, with the opener
+injected so the tests need no network, and neither ever raises out into the gate.
 
 !!! warning "Keep the boundary"
     Do **not** import `subprocess`, `os`, network code, or GitHub Actions into
@@ -77,6 +80,25 @@ network, and neither ever raises out into the gate.
 Baseline mode skips the gating: it computes coverage against an empty `DiffIndex`,
 ships to Sonar, and never blocks.
 
+## The quality half calls Chargate instead of importing it
+
+Brimyr is quality assurance, and coverage is only half of that. The other half judges
+the **net-new** findings a MegaLinter quality run produced. Chargate already owns a
+finished net-new engine (`chargate filter-sarif`), so brimyr does not vendor it or
+re-implement it: `action.yml` runs `magmamoose/chargate` as a nested step, and
+`quality.py` reads the two files that step leaves behind. The `--counts-json` document
+is the verdict's only input; the filtered SARIF is display-only, skimmed for the
+`path:line [rule]` strings the summary lists. Anything unreadable, unrecognised, or
+self-contradicting is exit `2`, because a half that cannot evaluate must not report a
+pass — and so is a scan that never completed, which `action.yml` detects from the nested
+step's `outcome` and passes on as `--quality-scan-broken`, reading no file at all.
+
+`brimyr lint` runs that half on its own, under its own PR-comment marker.
+`brimyr ci --quality-counts` instead folds the same verdict into the one job summary
+and the one PR comment coverage already writes, which is the consolidated view and the
+reason to prefer it. What the threshold means, and how to turn the half on, are on
+[Quality findings](quality-findings.md).
+
 ## The token broker is not part of the CLI
 
 `broker/` in the repository is a **separate deployable**: the AWS Lambda service
@@ -92,10 +114,12 @@ runbook live with the code, in
 | Code | Meaning |
 | --- | --- |
 | `0` | pass |
-| `1` | patch coverage below threshold |
-| `2` | broken test run / setup / usage error |
+| `1` | patch coverage below threshold, or blocking net-new quality findings |
+| `2` | broken test run / setup / usage error, or unreadable quality input |
 
-A *broken* test run is a tool error (`2`), never "0% patch coverage".
+A *broken* test run is a tool error (`2`), never "0% patch coverage". When both halves
+run in one `brimyr ci`, the process exits with the worse of the two codes on that same
+`0 < 1 < 2` scale: clean coverage never launders a blocking quality finding.
 
 ## Testing
 

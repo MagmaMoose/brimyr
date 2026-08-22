@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from brimyr.github_comment import (
+    QUALITY_MARKER,
     SUMMARY_MARKER,
     CommentConfig,
     post_pr_comment,
@@ -140,3 +141,34 @@ def test_honours_a_ghes_base_url():
     post_pr_comment(_config(base_url="https://ghe.example.com/api/v3"), "b", opener=opener)
 
     assert opener.calls[-1][1].startswith("https://ghe.example.com/api/v3/repos/")  # nosec B101
+
+
+def test_the_quality_marker_owns_a_separate_comment():
+    """`brimyr lint` must not overwrite the coverage comment, or vice versa.
+
+    The two subcommands can run in either order, or only one of them. Sharing a marker
+    would mean whichever ran last silently erased the other's verdict.
+    """
+    coverage_comment = {"id": 11, "body": f"{SUMMARY_MARKER}\ncoverage"}
+    opener = _FakeOpener([[coverage_comment], {"id": 12}])
+    result = post_pr_comment(_config(), "quality body", marker=QUALITY_MARKER, opener=opener)
+    assert result.ok and result.action == "created"  # nosec B101
+    # A POST, not a PATCH of comment 11 — the coverage comment is left alone.
+    method, url, body = opener.calls[-1]
+    assert method == "POST"  # nosec B101
+    assert "/issues/7/comments" in url  # nosec B101
+    assert body["body"].startswith(QUALITY_MARKER)  # nosec B101
+
+
+def test_the_quality_comment_updates_its_own_prior_one():
+    prior = {"id": 21, "body": f"{QUALITY_MARKER}\nold"}
+    opener = _FakeOpener([[{"id": 11, "body": SUMMARY_MARKER}, prior], {"id": 21}])
+    result = post_pr_comment(_config(), "new", marker=QUALITY_MARKER, opener=opener)
+    assert result.ok and result.action == "updated"  # nosec B101
+    method, url, _body = opener.calls[-1]
+    assert method == "PATCH"  # nosec B101
+    assert url.endswith("/issues/comments/21")  # nosec B101
+
+
+def test_the_two_markers_are_distinct():
+    assert QUALITY_MARKER != SUMMARY_MARKER  # nosec B101
