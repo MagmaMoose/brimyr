@@ -387,7 +387,7 @@ def test_lint_is_report_only_by_default(tmp_path, capsys):
     counts = _quality_counts(tmp_path / "counts.json", net_new=4, levels={"error": 4})
     code = main(["lint", "--counts", str(counts)])
     assert code == 0  # nosec B101
-    assert "report-only" in capsys.readouterr().err
+    assert "report-only" in capsys.readouterr().err  # nosec B101
 
 
 def test_lint_blocks_at_the_requested_level(tmp_path):
@@ -411,12 +411,12 @@ def test_lint_hard_fails_on_an_unknown_schema_version(tmp_path, capsys):
     # document brimyr cannot read must not be reported as a clean one.
     counts = _quality_counts(tmp_path / "counts.json", schema_version=99)
     assert main(["lint", "--counts", str(counts), "--fail-on", "any"]) == 2  # nosec B101
-    assert "schema_version" in capsys.readouterr().err
+    assert "schema_version" in capsys.readouterr().err  # nosec B101
 
 
 def test_lint_hard_fails_on_a_missing_counts_file(tmp_path, capsys):
     assert main(["lint", "--counts", str(tmp_path / "nope.json"), "--quiet"]) == 2  # nosec B101
-    assert "could not read" in capsys.readouterr().err
+    assert "could not read" in capsys.readouterr().err  # nosec B101
 
 
 def test_lint_hard_fails_when_the_sarif_contradicts_the_counts(tmp_path, capsys):
@@ -426,7 +426,7 @@ def test_lint_hard_fails_when_the_sarif_contradicts_the_counts(tmp_path, capsys)
     sarif = _quality_sarif(tmp_path / "net-new.sarif", count=1)
     code = main(["lint", "--counts", str(counts), "--findings", str(sarif), "--fail-on", "any"])
     assert code == 2  # nosec B101
-    assert "stale or truncated" in capsys.readouterr().err
+    assert "stale or truncated" in capsys.readouterr().err  # nosec B101
 
 
 def test_lint_writes_a_json_summary(tmp_path):
@@ -557,7 +557,7 @@ def test_ci_hard_fails_when_the_quality_scan_left_no_counts_file(repo, tmp_path,
         ]
     )
     assert code == 2  # nosec B101
-    assert "could not read" in capsys.readouterr().err
+    assert "could not read" in capsys.readouterr().err  # nosec B101
 
 
 def test_ci_without_quality_counts_is_unchanged(repo, tmp_path, monkeypatch):
@@ -648,7 +648,7 @@ def test_lint_scan_broken_is_an_error_without_reading_anything(tmp_path, capsys)
     assert main(["lint", "--counts", str(zeros), "--quiet"]) == 0  # nosec B101
     code = main(["lint", "--counts", str(zeros), "--scan-broken"])
     assert code == 2  # nosec B101
-    assert "BROKEN scan" in capsys.readouterr().err
+    assert "BROKEN scan" in capsys.readouterr().err  # nosec B101
 
 
 def test_ci_quality_scan_broken_is_an_error_and_still_reports_coverage(repo, tmp_path, monkeypatch):

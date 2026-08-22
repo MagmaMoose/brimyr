@@ -62,10 +62,10 @@ def _sarif(*results):
 
 def test_parses_a_well_formed_counts_document():
     counts = parse_counts(_counts(net_new=2, total=5))
-    assert counts.net_new == 2
-    assert counts.total == 5
-    assert counts.pre_existing == 3
-    assert counts.schema_version == 1
+    assert counts.net_new == 2  # nosec B101
+    assert counts.total == 5  # nosec B101
+    assert counts.pre_existing == 3  # nosec B101
+    assert counts.schema_version == 1  # nosec B101
 
 
 def test_an_unknown_schema_version_is_an_error_not_a_pass():
@@ -120,8 +120,8 @@ def test_a_non_integer_level_count_is_an_error():
 
 def test_zero_net_new_with_an_empty_level_map_is_consistent():
     counts = parse_counts(_counts(net_new=0, total=4, levels={}))
-    assert counts.net_new == 0
-    assert counts.pre_existing == 4
+    assert counts.net_new == 0  # nosec B101
+    assert counts.pre_existing == 4  # nosec B101
 
 
 # ── the threshold, in SARIF levels ───────────────────────────────────────────
@@ -129,41 +129,41 @@ def test_zero_net_new_with_an_empty_level_map_is_consistent():
 
 def test_report_only_is_the_default_and_blocks_nothing():
     decision = decide_quality_gate(parse_counts(_counts(net_new=9, levels={"error": 9})))
-    assert decision.fail_on == "none"
-    assert decision.failed is False
-    assert decision.gated is False
-    assert decision.exit_code == 0
+    assert decision.fail_on == "none"  # nosec B101
+    assert decision.failed is False  # nosec B101
+    assert decision.gated is False  # nosec B101
+    assert decision.exit_code == 0  # nosec B101
 
 
 def test_fail_on_any_blocks_on_a_single_net_new_finding():
     decision = decide_quality_gate(parse_counts(_counts(net_new=1, levels={"note": 1})), "any")
-    assert decision.failed is True
-    assert decision.blocking == 1
-    assert decision.exit_code == 1
+    assert decision.failed is True  # nosec B101
+    assert decision.blocking == 1  # nosec B101
+    assert decision.exit_code == 1  # nosec B101
 
 
 def test_fail_on_error_ignores_warnings_and_notes():
     counts = parse_counts(_counts(net_new=5, total=5, levels={"note": 2, "warning": 3}))
     decision = decide_quality_gate(counts, "error")
-    assert decision.blocking == 0
-    assert decision.failed is False
+    assert decision.blocking == 0  # nosec B101
+    assert decision.failed is False  # nosec B101
     # Still counted and still shown — reported, just not blocking.
-    assert decision.counts.net_new == 5
+    assert decision.counts.net_new == 5  # nosec B101
 
 
 def test_fail_on_warning_blocks_on_warnings_and_errors_but_not_notes():
     counts = parse_counts(_counts(net_new=6, total=6, levels={"note": 3, "warning": 2, "error": 1}))
-    assert decide_quality_gate(counts, "warning").blocking == 3
-    assert decide_quality_gate(counts, "error").blocking == 1
-    assert decide_quality_gate(counts, "note").blocking == 6
+    assert decide_quality_gate(counts, "warning").blocking == 3  # nosec B101
+    assert decide_quality_gate(counts, "error").blocking == 1  # nosec B101
+    assert decide_quality_gate(counts, "note").blocking == 6  # nosec B101
 
 
 def test_unlevelled_findings_only_block_at_any():
     # SARIF `level: none`. `note` is the lowest *level* threshold, so it deliberately
     # does not catch these; `any` is the setting that means literally any.
     counts = parse_counts(_counts(net_new=2, total=2, levels={"none": 2}))
-    assert decide_quality_gate(counts, "note").blocking == 0
-    assert decide_quality_gate(counts, "any").blocking == 2
+    assert decide_quality_gate(counts, "note").blocking == 0  # nosec B101
+    assert decide_quality_gate(counts, "any").blocking == 2  # nosec B101
 
 
 def test_an_unrecognised_level_never_silently_ranks_high():
@@ -171,15 +171,15 @@ def test_an_unrecognised_level_never_silently_ranks_high():
     # ranks at the floor, so it cannot spuriously trip an `error` threshold. It still
     # blocks at `any`, which is the setting that promises to.
     counts = parse_counts(_counts(net_new=1, total=1, levels={"catastrophe": 1}))
-    assert decide_quality_gate(counts, "error").blocking == 0
-    assert decide_quality_gate(counts, "any").blocking == 1
+    assert decide_quality_gate(counts, "error").blocking == 0  # nosec B101
+    assert decide_quality_gate(counts, "any").blocking == 1  # nosec B101
 
 
 def test_gate_false_is_report_only_whatever_the_threshold():
     counts = parse_counts(_counts(net_new=4, levels={"error": 4}))
     decision = decide_quality_gate(counts, "any", gate=False)
-    assert decision.failed is False
-    assert decision.gated is False
+    assert decision.failed is False  # nosec B101
+    assert decision.gated is False  # nosec B101
 
 
 def test_an_invalid_fail_on_is_an_error():
@@ -192,14 +192,14 @@ def test_every_documented_fail_on_choice_is_accepted(choice: str):
     # And every one is reachable: a threshold nothing can ever satisfy is a gate that
     # silently never blocks, which is the failure mode this module exists to avoid.
     decision = decide_quality_gate(parse_counts(_counts(net_new=1, levels={"error": 1})), choice)
-    assert decision.fail_on == choice
-    assert decision.failed is (choice != "none")
+    assert decision.fail_on == choice  # nosec B101
+    assert decision.failed is (choice != "none")  # nosec B101
 
 
 def test_fail_on_is_case_insensitive_and_trimmed():
     decision = decide_quality_gate(parse_counts(_counts(net_new=1, levels={"error": 1})), " ERROR ")
-    assert decision.fail_on == "error"
-    assert decision.failed is True
+    assert decision.fail_on == "error"  # nosec B101
+    assert decision.failed is True  # nosec B101
 
 
 # ── the filtered SARIF: display only, but its count must agree ───────────────
@@ -207,11 +207,11 @@ def test_fail_on_is_case_insensitive_and_trimmed():
 
 def test_counts_sarif_results_across_runs():
     sarif = {"runs": [{"results": [_result(), _result()]}, {"results": [_result()]}]}
-    assert count_sarif_results(sarif) == 3
+    assert count_sarif_results(sarif) == 3  # nosec B101
 
 
 def test_a_run_with_no_results_key_contributes_nothing():
-    assert count_sarif_results({"runs": [{"tool": {}}]}) == 0
+    assert count_sarif_results({"runs": [{"tool": {}}]}) == 0  # nosec B101
 
 
 def test_a_sarif_without_runs_is_an_error():
@@ -234,24 +234,24 @@ def test_a_sarif_agreeing_with_the_counts_passes_the_check():
 
 def test_finding_lines_render_path_line_and_rule():
     lines = read_finding_lines(_sarif(_result("src/a.py", 12, "E501")))
-    assert lines == ("src/a.py:12 [E501]",)
+    assert lines == ("src/a.py:12 [E501]",)  # nosec B101
 
 
 def test_finding_lines_degrade_rather_than_raise_on_odd_shapes():
     # Decoration on a verdict already decided by the counts. A finding with no location
     # should cost a vaguer line, never an exception.
     sarif = {"runs": [{"results": [{"ruleId": "X"}, {"locations": []}, "junk"]}]}
-    assert read_finding_lines(sarif) == ("(no location) [X]", "(no location)")
+    assert read_finding_lines(sarif) == ("(no location) [X]", "(no location)")  # nosec B101
 
 
 def test_the_listing_is_capped_and_says_how_many_it_dropped():
     many = _sarif(*[_result(f"f{i}.py", i) for i in range(30)])
     counts = parse_counts(_counts(net_new=30, total=30, levels={"warning": 30}))
     decision = decide_quality_gate(counts, "any", listing=read_finding_lines(many))
-    assert len(decision.listing) == 20
-    assert decision.listing_truncated == 10
+    assert len(decision.listing) == 20  # nosec B101
+    assert decision.listing_truncated == 10  # nosec B101
     # The COUNT is never truncated — only the listing is.
-    assert decision.blocking == 30
+    assert decision.blocking == 30  # nosec B101
 
 
 # ── malformed inputs, exhaustively: every one of these must raise, not return 0 ──
@@ -262,8 +262,8 @@ def test_an_absent_level_map_reads_as_empty():
     del payload["per_level_net_new"]
     del payload["per_level_total"]
     counts = parse_counts(payload)
-    assert counts.per_level_net_new == {}
-    assert counts.per_level_total == {}
+    assert counts.per_level_net_new == {}  # nosec B101
+    assert counts.per_level_total == {}  # nosec B101
 
 
 def test_a_non_object_level_map_is_an_error():
@@ -286,9 +286,8 @@ def test_a_malformed_sarif_is_an_error_not_zero_results(payload, match):
 
 
 def test_finding_lines_skip_a_non_object_run():
-    assert read_finding_lines({"runs": ["junk", {"results": [_result("b.py", 3, "R1")]}]}) == (
-        "b.py:3 [R1]",
-    )
+    sarif = {"runs": ["junk", {"results": [_result("b.py", 3, "R1")]}]}
+    assert read_finding_lines(sarif) == ("b.py:3 [R1]",)  # nosec B101
 
 
 @pytest.mark.parametrize(
@@ -301,7 +300,7 @@ def test_finding_lines_skip_a_non_object_run():
     ],
 )
 def test_finding_lines_degrade_on_every_broken_location_shape(result):
-    assert read_finding_lines({"runs": [{"results": [result]}]}) == ("(no location)",)
+    assert read_finding_lines({"runs": [{"results": [result]}]}) == ("(no location)",)  # nosec B101
 
 
 def test_a_uri_without_a_region_still_names_the_file():
@@ -309,7 +308,7 @@ def test_a_uri_without_a_region_still_names_the_file():
         "ruleId": "R",
         "locations": [{"physicalLocation": {"artifactLocation": {"uri": "x"}}}],
     }
-    assert read_finding_lines({"runs": [{"results": [result]}]}) == ("x [R]",)
+    assert read_finding_lines({"runs": [{"results": [result]}]}) == ("x [R]",)  # nosec B101
 
 
 # ── a scan that never completed ─────────────────────────────────────────────
@@ -317,21 +316,21 @@ def test_a_uri_without_a_region_still_names_the_file():
 
 def test_a_broken_scan_is_exit_two_and_reads_no_counts():
     decision = broken_decision("error")
-    assert decision.broken is True
-    assert decision.exit_code == 2
-    assert decision.failed is False
-    assert decision.gated is False
-    assert decision.reason == "broken"
+    assert decision.broken is True  # nosec B101
+    assert decision.exit_code == 2  # nosec B101
+    assert decision.failed is False  # nosec B101
+    assert decision.gated is False  # nosec B101
+    assert decision.reason == "broken"  # nosec B101
     # The threshold is still echoed, so the summary and the outputs can name it.
-    assert decision.fail_on == "error"
+    assert decision.fail_on == "error"  # nosec B101
 
 
 def test_a_broken_scan_is_not_the_same_as_a_clean_one():
     # Both have zero net-new findings. Only one of them is a passing PR — which is the
     # whole reason `chargate ci` writing its counts before it checks for runs matters.
     clean = decide_quality_gate(parse_counts(_counts(net_new=0, total=0, levels={})), "any")
-    assert clean.exit_code == 0
-    assert broken_decision("any").exit_code == 2
+    assert clean.exit_code == 0  # nosec B101
+    assert broken_decision("any").exit_code == 2  # nosec B101
 
 
 # ── a completed scan is not necessarily a full one ──────────────────────────
@@ -343,11 +342,11 @@ def test_a_scan_note_rides_along_and_never_gates():
     # are what a clean repo looks like — so the shortfall is stated, not gated on.
     counts = parse_counts(_counts(net_new=0, total=0, levels={}))
     decision = decide_quality_gate(counts, "any", scan_note="JAVA_PMD (no image)")
-    assert decision.scan_note == "JAVA_PMD (no image)"
-    assert decision.failed is False
-    assert decision.exit_code == 0
+    assert decision.scan_note == "JAVA_PMD (no image)"  # nosec B101
+    assert decision.failed is False  # nosec B101
+    assert decision.exit_code == 0  # nosec B101
 
 
 def test_an_empty_scan_note_is_normalised_away():
     decision = decide_quality_gate(parse_counts(_counts()), scan_note="   ")
-    assert decision.scan_note == ""
+    assert decision.scan_note == ""  # nosec B101
