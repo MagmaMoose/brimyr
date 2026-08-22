@@ -165,3 +165,16 @@ def test_a_degraded_scan_says_so_next_to_the_count():
     # repo produce the same zero.
     assert "The scan was not complete" in out
     assert "JAVA_PMD (no image known)" in out
+
+
+def test_the_quality_heading_is_a_sibling_of_the_coverage_one(make_report):
+    """Both blocks land in one job summary, so their headings have to read as peers.
+
+    Deliberately not "Brimyr: Quality" — `render_summary`'s heading already carries that
+    word, and a second one beneath it reads as a subsection rather than the other half
+    of the report.
+    """
+    coverage = render_summary(_decision(make_report, 9, 10), Mode.PR)
+    quality = render_quality_summary(_quality())
+    assert coverage.split("\n")[0] == "## Brimyr: Quality Assurance"  # nosec B101
+    assert quality.split("\n")[0] == "## Brimyr: Net-new findings"  # nosec B101

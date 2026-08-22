@@ -71,7 +71,7 @@ One comment per pull request, updated in place — both numbers, so the author g
 picture rather than just a verdict:
 
 ```
-## 🟣 Brimyr — patch coverage
+## Brimyr: Quality Assurance
 
 **Mode:** `pr` · **Gate:** `pass` · **Ecosystem:** .NET, JavaScript / TypeScript
 

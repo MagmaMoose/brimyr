@@ -15,7 +15,7 @@ A failing gate renders the number, the threshold, and the changed lines the test
 never executed: the only three things you need to know what to write a test for:
 
 ```markdown
-## 🟣 Brimyr, patch coverage
+## Brimyr: Quality Assurance
 
 **Mode:** `pr` · **Gate:** `fail` · **Ecosystem:** Python
 

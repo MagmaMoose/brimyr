@@ -164,7 +164,10 @@ def render_quality_summary(decision: QualityDecision) -> str:
     else:
         status = "`pass`"
 
-    lines: list[str] = ["## 🟣 Brimyr — quality", ""]
+    # Sibling of `render_summary`'s heading, in the same `Brimyr: <thing>` shape (#37).
+    # Deliberately NOT "Brimyr: Quality" — the block above already carries the word
+    # "Quality", and a second one under it would read as a subsection of the first.
+    lines: list[str] = ["## Brimyr: Net-new findings", ""]
     lines.append(f"**Gate:** {status} · **Blocks on:** `{decision.fail_on}`")
     lines.append("")
 

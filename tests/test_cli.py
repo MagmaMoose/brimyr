@@ -481,8 +481,8 @@ def test_ci_folds_the_quality_verdict_into_one_run(repo, tmp_path, monkeypatch):
     assert code == 1  # nosec B101
     # One consolidated view: both verdicts in the same summary block.
     text = summary.read_text()
-    assert "Brimyr — patch coverage" in text  # nosec B101
-    assert "Brimyr — quality" in text  # nosec B101
+    assert "Brimyr: Quality Assurance" in text  # nosec B101
+    assert "Brimyr: Net-new findings" in text  # nosec B101
 
 
 def test_ci_quality_report_only_leaves_a_passing_run_passing(repo, tmp_path):
@@ -574,7 +574,7 @@ def test_ci_without_quality_counts_is_unchanged(repo, tmp_path, monkeypatch):
         ["ci", "--mode", "pr", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)]
     )
     assert code == 0  # nosec B101
-    assert "Brimyr — quality" not in summary.read_text()  # nosec B101
+    assert "Brimyr: Net-new findings" not in summary.read_text()  # nosec B101
     assert "quality_" not in outputs.read_text()  # nosec B101
 
 
@@ -676,7 +676,7 @@ def test_ci_quality_scan_broken_is_an_error_and_still_reports_coverage(repo, tmp
     assert code == 2  # nosec B101
     text = summary.read_text()
     # The half that DID work is still reported — a broken quality scan must not erase it.
-    assert "Brimyr — patch coverage" in text  # nosec B101
+    assert "Brimyr: Quality Assurance" in text  # nosec B101
     assert "The quality scan did not complete" in text  # nosec B101
 
 
