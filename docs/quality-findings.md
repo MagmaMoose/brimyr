@@ -17,13 +17,15 @@ MegaLinter's quality linters, then net-new classification against the PR diff �
 folds its verdict into the same job summary and the same PR comment as coverage.
 **Report-only by default**; see [Start report-only](#start-report-only).
 
-!!! warning "The pinned Chargate ref does not ship this yet"
-    `action.yml` pins `magmamoose/chargate@a852f9c` (v2.11.25), which predates the
-    `quality` flavor. Until Chargate cuts the release that carries it and Brimyr's pin
-    is bumped, `quality: 'true'` fails the nested step, and Brimyr reports a scan that
-    did not complete: exit `2`, with `quality_gate_result` set to `error`. That is the
-    boundary working as designed: a gate that cannot evaluate must not go green. Leave
-    `quality` off until the pin moves.
+`action.yml` pins `magmamoose/chargate@528a42e` (v2.11.27), which carries the curated
+`quality` flavor added in v2.11.26 — so `quality: 'true'` is usable.
+
+!!! note "If you pin Brimyr below v1.9.1, leave `quality` off"
+    v1.9.0 shipped this feature against `chargate@a852f9c` (v2.11.25), which predates the
+    flavor by seventeen seconds of release timing. On that pin the nested step fails, the
+    counts file is never written, and Brimyr exits `2` with `quality_gate_result` set to
+    `error` — the boundary working as designed, since a gate that cannot evaluate must not
+    go green. It is inert rather than dangerous, but it is a red X on every PR.
 
 ## Brimyr calls Chargate; it does not share a library with it
 
