@@ -1,12 +1,14 @@
 # Architecture map
 
-A **pure core** with thin **side-effecting edges**.
+A **pure core** with thin **side-effecting edges**, serving two gates: patch coverage
+and net-new quality findings.
 
 `src/brimyr/coverage/` is the pure core: `diff.py` parses a unified diff into a
 `DiffIndex`; `lcov.py` / `cobertura.py` / `jacoco.py` parse reports into a
 `CoverageReport` (`model.py`); `patch.py` intersects the two — added lines ∩ executable
-lines — and is the gate's heart. Nothing under `coverage/` may import `subprocess`, `os`,
-network or Actions code; that purity is what keeps it deterministic and testable.
+lines — and is the coverage gate's heart. Nothing under `coverage/` may import
+`subprocess`, `os`, network or Actions code; that purity is what keeps it deterministic
+and testable.
 
 `quality.py` is a second pure module, outside `coverage/`: handed chargate's
 already-parsed `filter-sarif` counts JSON it returns a verdict, so `cli.py` does every

@@ -27,6 +27,14 @@ folds its verdict into the same job summary and the same PR comment as coverage.
     `error` — the boundary working as designed, since a gate that cannot evaluate must not
     go green. It is inert rather than dangerous, but it is a red X on every PR.
 
+## The boundary is the subject, not the tool
+
+**Brimyr is quality assurance. Chargate is security assurance.** Brimyr's quality half
+calls Chargate's engine, so both tools now emit Chargate-derived findings — but they are
+not the same findings and they are not two views of one thing. A *security* finding
+belongs to Chargate's gate; a *quality* finding belongs to this one. Read a finding by
+its subject, not by which tool surfaced it.
+
 ## Brimyr calls Chargate; it does not share a library with it
 
 Chargate already owns a finished net-new engine. `chargate filter-sarif` takes a SARIF
@@ -102,9 +110,11 @@ nobody reads. No test catches that, so the defaults are the mitigation:
 ## One run, one comment
 
 Supplying the quality inputs does not add a second gate step or a second PR comment. The
-verdict is rendered into the same job summary block and the same comment as coverage,
-and the run's exit code is the worse of the two on the usual scale — `0` pass, `1` a
-gate blocked, `2` a tool error.
+verdict is rendered into the same job summary and the same comment as coverage — a
+second heading, `## Brimyr: Net-new findings`, below the coverage block's
+`## Brimyr: Quality Assurance` — and the run's exit code is the worse of the two on the
+usual scale: `0` pass, `1` a gate blocked, `2` a tool error. What both blocks look like
+is on [PR comment](pr-comment.md#one-comment-two-blocks).
 
 A broken test run still reports `2` even when the quality half is clean, and a clean
 coverage number does not launder a blocking quality finding.

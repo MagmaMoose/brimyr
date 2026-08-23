@@ -3,11 +3,13 @@
 [![CI](https://github.com/magmamoose/brimyr/actions/workflows/ci.yml/badge.svg)](https://github.com/magmamoose/brimyr/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/magmamoose/brimyr)](LICENSE)
 
-**Point Brimyr at any repo and it figures out the rest.** It detects the ecosystem,
-runs the test suite with coverage instrumentation on, and gates the pull request on
-the coverage of the lines that pull request changed. One composite action. No
-per-repo configuration, no server, no SaaS account, no coverage report to produce
-first.
+**Brimyr is quality assurance for a pull request: it gates on the coverage of the
+lines that PR changed, and on the net-new quality findings that PR introduced.** Point
+it at any repo and it figures out the rest — it detects the ecosystem, runs the test
+suite with coverage instrumentation on, and (with `quality: 'true'`) classifies the
+linters' findings against that same diff. One composite action, one job, one PR
+comment. No per-repo configuration, no server, no SaaS account, no coverage report to
+produce first.
 
 ```yaml
       - uses: magmamoose/brimyr@v1     # that is the whole configuration
@@ -18,7 +20,8 @@ That is the part nothing else does. Patch-coverage *maths* is well-trodden —
 Brimyr deliberately matches its semantics. What every other tool has in common is
 that **you bring your own coverage report**: you work out the right test command for
 each language, wire it per repo, and hand the result to a checker. Across eight
-repos in four languages, that wiring *is* the project.
+repos in four languages, that wiring *is* the project. Against the other
+patch-coverage tools:
 
 | | Runs your tests | Detects the ecosystem | Gates on the **diff** | No SaaS backend |
 | --- | :-: | :-: | :-: | :-: |
@@ -34,27 +37,30 @@ Free, MIT, and it runs entirely on your runner.
 ## Where it sits
 
 Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
-is **security assurance**. They are twins, not competitors — Chargate gates net-new
-security findings, Brimyr gates the coverage of your change, and a repo wants both.
-[Diatreme](https://github.com/MagmaMoose/diatreme) builds and releases. Coverage is
-only half of quality assurance, though, so Brimyr can run Chargate's *quality* linters
-as a nested step rather than growing its own —
-[see below](#coverage-is-half-of-quality-assurance).
+is **security assurance**; [Diatreme](https://github.com/MagmaMoose/diatreme) builds
+and releases. Brimyr and Chargate are twins, not competitors — Chargate gates net-new
+*security* findings, Brimyr gates coverage **and** net-new *quality* findings, and a
+repo wants both. The line between them is the **subject**, not the tool: Brimyr's
+quality half runs Chargate's net-new engine as a nested step rather than growing its
+own — [see below](#coverage-is-half-of-quality-assurance).
 
 It also does the thing SonarSource's own action declines to: **`SonarSource/sonarqube-scan-action`
 explicitly does not support .NET** and tells you to run SonarScanner for .NET
 yourself. Brimyr does that for you — `begin` → `dotnet build --no-incremental` →
 your tests → `end` — automatically, when it detects a .NET repo.
 
-## Two faces, kept separate
+## Three faces, kept separate
 
 | Face | Blocking? | What it is |
 | --- | --- | --- |
 | **Patch-coverage gate** | **yes** | The % of *changed executable lines* covered, diffed against the merge-base. Blocks below the threshold. Computed **locally** — no SonarQube involvement. |
+| **Net-new quality gate** | **report-only by default** | The quality findings *this PR introduced*, classified against that same diff. Off unless `quality: 'true'`, and even then `quality_fail_on` defaults to `none` — it counts and reports, and blocks only at a SARIF level you choose. |
 | **`sonar-scanner` run** | no | One Sonar run performs Sonar's native quality analysis **and** ingests the coverage file → SonarQube, for the coverage/quality trend. |
 
-Sonar derives new-vs-old code itself (its **New Code Period**); you never feed it
-"net-new" coverage. Net-new is the gate's job, and the gate doesn't need Sonar.
+The two gates share one job, one summary and one PR comment, and the job exits on the
+worse of the two. Sonar is the odd one out: it derives new-vs-old code itself (its
+**New Code Period**), so you never feed it "net-new" coverage. Net-new is the gates'
+job, and neither gate needs Sonar.
 
 ## Why patch coverage?
 
@@ -63,12 +69,13 @@ coverage on new code lets it rot. Patch coverage splits the difference: hold *ne
 and changed* lines to a bar, leave the back-catalogue alone.
 
 - **Gate** on what *this PR* changed → actionable, no legacy-debt noise.
-- **Ship** the full coverage to SonarQube → the long-run trend and quality gate.
+- **Ship** the full coverage to SonarQube → the long-run trend, and Sonar's own
+  quality gate (not to be confused with Brimyr's net-new quality gate above).
 
 ## What the author sees
 
-One comment per pull request, updated in place — both numbers, so the author gets the
-picture rather than just a verdict:
+**One** comment per pull request, updated in place, carrying **both halves** — so the
+author gets the picture rather than just a verdict:
 
 ```
 ## Brimyr: Quality Assurance
@@ -80,14 +87,28 @@ picture rather than just a verdict:
 | Patch coverage | **92.3%** |
 | Covered / changed executable lines | 24 / 26 |
 | Total coverage (measured files) | 61.4% |
-| Covered / executable lines across 318 file(s) | 8,204 / 13,362 |
+| Covered / executable lines across 318 file(s) | 8204 / 13362 |
 | Threshold | 80.0% |
 
 ✅ Patch coverage 92.3% meets the 80.0% threshold.
+
+## Brimyr: Net-new findings
+
+**Gate:** `report-only` · **Blocks on:** `none`
+
+| Metric | Value |
+|--------|-------|
+| Net-new findings | **16** |
+| Pre-existing (never blocking) | 214 |
+| Net-new by level | error=2, note=3, warning=11 |
+
+📋 Report-only — `quality_fail_on` is `none`, so findings are counted and shown but nothing blocks.
 ```
 
-The gate is the patch number alone. A codebase at 61% does not fail a well-tested
-change — that is the whole point — but the author still sees where the repo stands.
+Only the patch number is gating there. A codebase at 61% does not fail a well-tested
+change — that is the whole point — and at the default `quality_fail_on: none` those 16
+net-new findings do not fail it either. Both are shown so the author sees where the
+repo stands: a green Brimyr routinely carries findings it did not block on.
 
 Small diffs are exempt and **say so**, rather than passing quietly:
 
@@ -144,8 +165,8 @@ Both drive the same `brimyr` Python CLI.
 ### 1. Composite action
 
 ```yaml
-# .github/workflows/coverage.yml
-name: Coverage
+# .github/workflows/quality.yml
+name: Quality
 on:
   pull_request:
   push:
@@ -156,7 +177,7 @@ permissions:
   pull-requests: write   # for the PR comment
 
 jobs:
-  coverage:
+  quality:
     runs-on: ubuntu-latest
     steps:
       # Check out FIRST: the deps install below runs in the workspace, so the
@@ -171,14 +192,15 @@ jobs:
         with:
           checkout: 'false'                     # already checked out above
           threshold: '80'
-          pr_comment: 'true'                    # one PR comment, updated in place
+          quality: 'true'                       # the other half; report-only by default
+          pr_comment: 'true'                    # one PR comment, both halves, in place
           # sonar_url: https://sonar.example.com
           # sonar_token: ${{ secrets.SONAR_TOKEN }}
 ```
 
-On PRs it runs your tests with coverage, gates on patch coverage, and (if
-`sonar_url` is set) ships to SonarQube. On push to the default branch it runs a
-non-gating baseline that still feeds the trend.
+On PRs it runs your tests with coverage, gates on patch coverage, classifies the
+net-new quality findings, and (if `sonar_url` is set) ships to SonarQube. On push to
+the default branch it runs a non-gating baseline that still feeds the trend.
 
 Brimyr runs the tests **on the runner**, so install your toolchain and test deps
 in a step before it — or skip the run entirely by feeding a ready-made report via
@@ -237,13 +259,16 @@ The other half is what the linters say, so `quality: 'true'` adds a second gate:
 diff the coverage gate uses. Details in [Quality findings](docs/quality-findings.md).
 
 Brimyr implements none of that classification. Chargate already owns a finished net-new
-engine, so Brimyr **calls it as a nested step** rather than sharing a library —
-MegaLinter's quality linters → SARIF → net-new against the diff — and reads the two
-files it leaves behind. A shared package would buy version skew, lockfile drift and a
-diamond dependency inside one job; a subprocess in its own environment has none of those
-properties. Chargate's own `fail_on` is pinned to `none` so it can never set the job's
-exit code: it reports, Brimyr decides. The verdict lands in the *same* job summary and
-the *same* PR comment as coverage, and the job exits on the worse of the two.
+engine, so Brimyr does not import it, vendor it or re-implement it — it **calls it as a
+nested step** (MegaLinter's quality linters → SARIF → net-new against the diff) and
+reads the two files that run leaves behind. A shared package would buy version skew,
+lockfile drift and a diamond dependency inside one job; a subprocess in its own
+environment has none of those properties. That is written down as
+[ADR 0002](.claude/decisions/0002-quality-gate-calls-chargate.md).
+
+Chargate's own `fail_on` is pinned to `none` so it can never set the job's exit code:
+it reports, Brimyr decides. The verdict lands in the *same* job summary and the *same*
+PR comment as coverage, and the job exits on the worse of the two.
 
 The nested step is `continue-on-error`, so a Docker or MegaLinter failure cannot take the
 coverage gate down with it — and it is not a silent pass either. Brimyr branches on that
@@ -264,12 +289,6 @@ gates on per-result verdicts, where a missing `security-severity` falls back to 
 level, but Brimyr reads only the counts document, whose per-severity maps are populated
 solely from that property — which quality linters essentially never emit. A band-valued
 threshold read off it would sit there never blocking anything.
-
-> ⚠️ **The pinned Chargate release does not ship the quality flavor yet.** `action.yml`
-> pins Chargate at `v2.11.25`, which has no `quality` flavor, so `quality: 'true'`
-> cannot work until Chargate releases it and that pin is bumped. Until then the nested
-> step fails and the run exits **2** reporting a scan that did not complete, rather than
-> a clean one.
 
 ## SonarQube
 
@@ -318,9 +337,11 @@ findings · `2` broken test run / setup error, or a quality scan that did not co
 
 ## Modes
 
-- **PR events** → run tests → **patch-coverage gate** → ship to SonarQube.
+- **PR events** → run tests → **patch-coverage gate**, plus the **quality gate** when
+  `quality: 'true'` → ship to SonarQube.
 - **Push to default branch / scheduled** → run tests → ship to SonarQube as the
-  trend baseline → **no** gate.
+  trend baseline → **no** gate. Quality findings are still counted and shown; a
+  baseline run has no diff to gate against, and says so.
 
 `mode: auto` (default) picks this from the event; force with `mode: pr|baseline`.
 

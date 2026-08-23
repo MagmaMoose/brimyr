@@ -6,16 +6,22 @@ Subcommands:
   base/head → patch coverage % + a gate exit code). Decoupled from GitHub Actions
   and unit-tested in isolation.
 * ``brimyr ci`` — the full CI flow (detect ecosystem, run tests with coverage,
-  compute patch coverage, gate, run sonar-scanner, ship).
+  compute patch coverage, gate, run sonar-scanner, ship). Given ``--quality-counts``
+  (or ``--quality-scan-broken``) it also decides the net-new *quality* half and folds
+  that verdict into the SAME job summary and the SAME PR comment — one consolidated
+  view, which is the reason to prefer it over a separate ``brimyr lint`` run.
 * ``brimyr local`` — the same flow against a locally inferred base, to check a
   branch before pushing.
 * ``brimyr lint`` — gate on the net-new *quality* findings Chargate classified
   (``chargate filter-sarif`` writes them; brimyr decides pass/fail). Report-only
-  unless ``--fail-on`` says otherwise.
+  unless ``--fail-on`` says otherwise. Standalone, so it comments under its own
+  marker rather than touching the consolidated one.
 * ``brimyr version`` — print the version.
 
-Exit codes: ``0`` pass · ``1`` patch coverage below threshold · ``2`` broken test
-run / setup / usage error.
+Exit codes: ``0`` pass · ``1`` patch coverage below threshold, or blocking net-new
+quality findings · ``2`` broken test run / setup / usage error, a quality input the
+gate could not evaluate, or a quality scan that did not complete. A run that does
+both halves exits with the worse of the two.
 """
 
 from __future__ import annotations
@@ -584,7 +590,14 @@ def _maybe_post_comment(
     *,
     marker: str = comment_mod.SUMMARY_MARKER,
 ) -> str | None:
-    """Post the PR comment when asked. Failure-isolated: never changes the verdict."""
+    """Post the PR comment when asked. Failure-isolated: never changes the verdict.
+
+    ``marker`` decides which comment is claimed, and there is one comment per marker.
+    The default :data:`~brimyr.github_comment.SUMMARY_MARKER` owns the consolidated
+    comment ``brimyr ci`` writes — coverage, plus the quality block when that half ran.
+    ``brimyr lint`` passes :data:`~brimyr.github_comment.QUALITY_MARKER` instead so a
+    standalone run cannot overwrite it.
+    """
     if not getattr(args, "pr_comment", False):
         return None
 

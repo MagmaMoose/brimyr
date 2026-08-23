@@ -3,8 +3,8 @@
 <!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/quality.py, src/brimyr/runner.py, broker/app/broker.py -->
 
 Brimyr is one `brimyr` Python CLI (`src/brimyr/cli.py:main`) behind three GitHub
-surfaces. The design splits cleanly into a **pure core** and a thin set of
-**side-effecting edges**.
+surfaces, running two gates: **patch coverage** and **net-new quality findings**. The
+design splits cleanly into a **pure core** and a thin set of **side-effecting edges**.
 
 ## Module map
 
@@ -69,16 +69,27 @@ injected so the tests need no network, and neither ever raises out into the gate
    `GateDecision` and exit code.
 7. **`sonar.run_scanner`** (optional) ships quality + coverage to SonarQube. It is
    failure-isolated: it never raises, so a Sonar outage can't fail the gate.
-8. **`report`** writes the GitHub job summary and step outputs.
-9. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
-   on the PR as a single marker-owned comment, creating it once, then `PATCH`ing it
-   on every later push. When `token_broker_url` is set,
-   **`broker_client.mint_bot_token`** first exchanges the job's Actions OIDC token
-   for a `Brimyr[bot]` installation token; on any failure it returns `None` and the
-   job's `GITHUB_TOKEN` is used instead. Both are failure-isolated, like Sonar.
+8. **`quality.decide_quality_gate`** (optional) decides the net-new half on `fail_on`,
+   over the counts `cli` read and `quality.parse_counts` validated out of the JSON the
+   nested Chargate step left behind — or, told the scan never completed,
+   `quality.broken_decision` reads nothing and reports a tool error. Same `Mode.gates`
+   flag as coverage, so baseline gates neither.
+9. **`report`** writes the GitHub job summary and step outputs — `render_summary`'s
+   coverage block, with `render_quality_summary`'s net-new block appended when that
+   half ran.
+10. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
+    on the PR as a single marker-owned comment, creating it once, then `PATCH`ing it
+    on every later push. When `token_broker_url` is set,
+    **`broker_client.mint_bot_token`** first exchanges the job's Actions OIDC token
+    for a `Brimyr[bot]` installation token; on any failure it returns `None` and the
+    job's `GITHUB_TOKEN` is used instead. Both are failure-isolated, like Sonar.
 
-Baseline mode skips the gating: it computes coverage against an empty `DiffIndex`,
-ships to Sonar, and never blocks.
+Baseline mode skips the gating — both halves. It computes coverage against an empty
+`DiffIndex`, ships to Sonar, and never blocks; a baseline quality run is report-only
+for its own reason (no diff, so no net-new set worth gating), which the summary names
+rather than blaming the threshold.
+
+The process exits with the worse of the two halves' codes.
 
 ## The quality half calls Chargate instead of importing it
 

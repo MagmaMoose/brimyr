@@ -2,10 +2,13 @@
 
 <!-- sources: README.md, src/brimyr/cli.py, src/brimyr/quality.py, action.yml -->
 
-**Point Brimyr at any repo and it figures out the rest.** It detects the ecosystem,
-runs the test suite with coverage instrumentation on, and gates the pull request on
-the coverage of the lines that pull request changed (diff-cover semantics), blocking
-below a threshold (default **80%**). Pre-existing uncovered code never blocks.
+**Brimyr is quality assurance for a pull request: it gates on the coverage of the
+lines that PR changed, and on the net-new quality findings that PR introduced.** Point
+it at any repo and it figures out the rest — it detects the ecosystem, runs the test
+suite with coverage instrumentation on, and gates on the coverage of the changed lines
+(diff-cover semantics), blocking below a threshold (default **80%**). Pre-existing
+uncovered code never blocks. Turn `quality: 'true'` on and the same run also classifies
+the linters' findings against that same diff. One job, one summary, one PR comment.
 
 ```yaml
       - uses: magmamoose/brimyr@v1     # that is the whole configuration
@@ -18,9 +21,11 @@ estate in several languages, that wiring *is* the project.
 
 Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
 is **security assurance**, and [Diatreme](https://github.com/MagmaMoose/diatreme)
-builds and releases. Twins, not competitors — though coverage is only half of quality
-assurance, so Brimyr runs Chargate's *quality* linters for the other half rather than
-growing its own ([see below](#coverage-is-half-of-quality-assurance)).
+builds and releases. Brimyr and Chargate are twins, not competitors — Chargate gates
+net-new *security* findings, Brimyr gates coverage **and** net-new *quality*
+findings. The line between them is the **subject**, not the tool: Brimyr's quality
+half runs Chargate's net-new engine rather than growing its own
+([see below](#coverage-is-half-of-quality-assurance)).
 
 ## What it detects
 
@@ -38,15 +43,22 @@ merges them into a single number. Override any of it with `ecosystem`,
 The same run, non-blocking, ships coverage to SonarQube for the long-run trend. See
 [SonarQube](sonarqube.md).
 
-## Two faces, kept separate
+## Three faces, kept separate
 
 - **Blocking: the patch-coverage gate.** The percentage of *changed executable
   lines* the tests covered, diffed against `merge-base(base, head)`. Blocks below
   the threshold. Computed **locally**; no SonarQube involvement.
+- **Report-only by default: the net-new quality gate.** The quality findings *this
+  PR introduced*, classified against that same diff. Off unless `quality: 'true'`,
+  and even then `quality_fail_on` defaults to `none` — it counts and reports, and
+  blocks only at a SARIF level you choose.
 - **Non-blocking: one `sonar-scanner` run.** Sonar's native quality analysis plus
   ingesting the coverage file → SonarQube, for history and the coverage/quality
   trend. Sonar derives new-vs-old code itself (its New Code Period); you never feed
   it "net-new".
+
+The two gates share one job, one summary and one PR comment, and the job exits on
+the worse of the two.
 
 !!! danger "Broken test run ≠ 0% coverage"
     If the test run failed, timed out, or produced no coverage, that is an **error
@@ -67,11 +79,13 @@ diff the coverage gate uses, and folds that verdict into the same job summary an
 same PR comment as coverage. The job exits on the worse of the two.
 
 Brimyr implements none of that classification. Chargate already owns a finished net-new
-engine, so Brimyr **calls it as a nested step** rather than sharing a library: a shared
-package would buy version skew, lockfile drift and a diamond dependency inside one job,
-and a subprocess in its own environment has none of those properties. Chargate's own
-`fail_on` is pinned to `none` there, so it can never set the job's exit code — it
-reports, Brimyr decides.
+engine, so Brimyr does not import it, vendor it or re-implement it — it **calls it as a
+nested step**: a shared package would buy version skew, lockfile drift and a diamond
+dependency inside one job, and a subprocess in its own environment has none of those
+properties. That is
+[ADR 0002](https://github.com/MagmaMoose/brimyr/blob/main/.claude/decisions/0002-quality-gate-calls-chargate.md).
+Chargate's own `fail_on` is pinned to `none` there, so it can never set the job's exit
+code — it reports, Brimyr decides.
 
 `quality_fail_on` defaults to `none`, which makes it **report-only** until you say
 otherwise. MegaLinter's quality half over a mature repo is far denser than its security
@@ -87,12 +101,6 @@ tool error instead: exit **2**, `quality_gate_result` `error`. Nor is a scan tha
 *completed* necessarily a full one: when Chargate could not start a linter it says which,
 and Brimyr states that shortfall beside the count rather than passing a smaller scan off
 as the whole answer.
-
-!!! warning "The pinned Chargate release does not ship the quality flavor yet"
-    `action.yml` pins Chargate at `v2.11.25`, which has no `quality` flavor, so
-    `quality: 'true'` cannot work until Chargate releases it and that pin is bumped.
-    Until then the nested step fails and the run exits **2** reporting a scan that did
-    not complete: a gate that cannot evaluate its input does not go green.
 
 ## Two surfaces, one CLI
 
@@ -110,17 +118,21 @@ input and output, [Architecture](architecture.md) for how it fits together,
 ## The PR comment
 
 Opt in with `pr_comment` and the verdict lands on the pull request as **one**
-comment, updated in place on every push rather than stacked: the number, the
-threshold, and the changed lines the tests never executed. Set `token_broker_url`
-as well and it is authored by **Brimyr[bot]** rather than the shared
-`github-actions[bot]`. Neither can fail the gate: a comment is a convenience, and a
-convenience must never turn a green PR red. See [PR comment](pr-comment.md).
+comment, updated in place on every push rather than stacked, and carrying **both
+halves**: the coverage number, the threshold and the changed lines the tests never
+executed, then the net-new findings count, its per-level breakdown and what it blocks
+on. Set `token_broker_url` as well and it is authored by **Brimyr[bot]** rather than
+the shared `github-actions[bot]`. Neither can fail the gate: a comment is a
+convenience, and a convenience must never turn a green PR red. See
+[PR comment](pr-comment.md).
 
 ## Modes
 
-- **PR events** → run tests → patch-coverage gate → ship to SonarQube.
+- **PR events** → run tests → patch-coverage gate, plus the quality gate when
+  `quality: 'true'` → ship to SonarQube.
 - **Push to default branch / scheduled** → run tests → ship to SonarQube as the
-  trend baseline → **no** gate.
+  trend baseline → **no** gate. Quality findings are still counted and shown; a
+  baseline run has no diff to gate against, and says so.
 
 `mode: auto` (default) picks this from the event; force it with `mode: pr|baseline`.
 

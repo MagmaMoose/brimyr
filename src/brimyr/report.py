@@ -30,7 +30,12 @@ def render_summary(
     ecosystems: Sequence[Ecosystem] = (),
     sonar_message: str | None = None,
 ) -> str:
-    """Render the Markdown job summary for a CI run."""
+    """Render the job summary's **coverage** block: ``## Brimyr: Quality Assurance``.
+
+    One of two blocks, not the whole summary: ``cli`` appends
+    :func:`render_quality_summary`'s ``## Brimyr: Net-new findings`` below this one when
+    the quality half ran, and posts the concatenation as a single PR comment.
+    """
     patch = decision.patch
     if broken:
         status = "`error`"
