@@ -1,4 +1,9 @@
-"""Run ``sonar-scanner`` to ship quality + coverage to SonarQube — non-blocking.
+"""Run ``sonar-scanner`` to ship quality + coverage to SonarQube — non-blocking, and opt-in.
+
+Skipped, with the reason in the result, on any of three conditions: no host URL, no token, or
+no ``sonar-scanner`` on PATH. A skipped run is not a failed one and never blocks the gate — but
+it also means no Sonar analysis exists for that pull request, so nothing downstream should treat
+Sonar as a source it has already consulted.
 
 SonarQube is the **only** Sonar run in the pipeline and it is owned here. Unlike a
 findings aggregator you POST to, Sonar is an *analyzer you drive*: this runs

@@ -40,8 +40,9 @@ A polyglot repo matches more than one, produces one report per language, and Bri
 merges them into a single number. Override any of it with `ecosystem`,
 `test_command`, or `coverage_file`. See [Action reference](action.md).
 
-The same run, non-blocking, ships coverage to SonarQube for the long-run trend. See
-[SonarQube](sonarqube.md).
+The same run can also ship coverage to SonarQube for the long-run trend, non-blocking. It does
+that only when `sonar_url` and `sonar_token` are both set and a `sonar-scanner` is on PATH;
+otherwise the step is skipped with a reason and nothing fails. See [SonarQube](sonarqube.md).
 
 ## Three faces, kept separate
 
@@ -52,7 +53,8 @@ The same run, non-blocking, ships coverage to SonarQube for the long-run trend. 
   PR introduced*, classified against that same diff. Off unless `quality: 'true'`,
   and even then `quality_fail_on` defaults to `none` — it counts and reports, and
   blocks only at a SARIF level you choose.
-- **Non-blocking: one `sonar-scanner` run.** Sonar's native quality analysis plus
+- **Non-blocking, and opt-in: one `sonar-scanner` run.** Off unless `sonar_url` and
+  `sonar_token` are set. Sonar's native quality analysis plus
   ingesting the coverage file → SonarQube, for history and the coverage/quality
   trend. Sonar derives new-vs-old code itself (its New Code Period); you never feed
   it "net-new".
