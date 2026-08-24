@@ -2,14 +2,18 @@
 
 Canonical agent context. `AGENTS.md` restates it — **edit both together.**
 
-A **patch-coverage gate**: detects the ecosystem (Python / JS-TS / .NET / Java), runs
-its tests **with coverage on**, gates **only on the lines the diff changed** (diff-cover,
-default 80%). Pre-existing uncovered code never blocks. Non-blocking alongside: total
-coverage, one PR comment, a SonarQube analysis.
+**Quality assurance: two gates, one run, one summary, one PR comment**; the job exits on
+the worse of the two. Chargate is the *security* sibling; the split is the subject, not
+the tool.
 
-Its other half gates net-new **quality** findings — brimyr does not lint: it calls
-`chargate filter-sarif` across a process boundary and gates on the counts JSON
-(`quality.py`, `brimyr lint`). Report-only by default.
+**Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), runs its tests
+**with coverage on**, gates **only on the lines the diff changed** (diff-cover, 80%);
+pre-existing uncovered code never blocks. **Net-new quality** — brimyr does not lint: it
+calls `chargate filter-sarif` across a process boundary and gates on the counts JSON
+(`quality.py`, `brimyr lint`). Off unless `quality: 'true'`; `quality_fail_on` defaults
+to `none`, so report-only until it names a SARIF level (`note`/`warning`/`error`/`any`).
+
+Non-blocking alongside: total coverage, a SonarQube analysis.
 
 @.claude/QUICK_START.md
 @.claude/COMMON_MISTAKES.md
@@ -55,6 +59,6 @@ fail the gate. Start at `cli.py:_run_flow`.
 - Architectural decision → `/adr`. Public behaviour/API/config changed → `/update-docs`.
 - `PROJECT_INDEX.json` stale after a new module or refactor: regenerate that section,
   bump `generated`.
-- Auto-loaded tier (this file + @-imports): ~1500 tokens, at the ~1500 target.
+- Auto-loaded tier (this file + @-imports): a ~1500-token target, not a measurement.
   **Measure it** — words×1.3 under-reads this content ~40%. Move detail out, never
   delete it.

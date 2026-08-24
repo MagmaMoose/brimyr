@@ -1,7 +1,10 @@
 """GitHub PR comment client — optional, idempotent, and failure-isolated.
 
-Posts **one** consolidated patch-coverage comment on the pull request: the
-percentage, the threshold, and the changed lines the tests never executed.
+Posts **one** consolidated comment on the pull request. On the normal action path
+(``brimyr ci``) that one body carries both halves of the run: the coverage block
+(``## Brimyr: Quality Assurance`` — percentage, threshold, and the changed lines the
+tests never executed) and, when the quality half is on, the net-new findings block
+(``## Brimyr: Net-new findings``). Two verdicts, one comment.
 
 Idempotency is the whole point. The comment carries a hidden HTML marker
 (:data:`SUMMARY_MARKER`); on every run we look for the prior marked comment and

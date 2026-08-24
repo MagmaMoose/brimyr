@@ -4,20 +4,24 @@
 read it. There is no `@`-import mechanism here, so the two drift unless edited together —
 change one, change the other.
 
-Brimyr is a **patch-coverage gate**: it detects the ecosystem (Python / JS-TS / .NET /
-Java), runs its tests **with coverage on**, and gates a PR **only on the lines the diff
-changed** (diff-cover semantics, default 80%). Pre-existing uncovered code never blocks.
-Non-blocking alongside: total coverage, one PR comment, a SonarQube analysis. One CLI,
-two surfaces: `action.yml` and `.pre-commit-hooks.yaml`.
+Brimyr is **quality assurance**: two gates in one run, one summary, one PR comment, and
+the job exits on the worse of the two. Chargate is the *security* sibling — the split is
+the subject, not the tool. One CLI, two surfaces: `action.yml` and
+`.pre-commit-hooks.yaml`.
 
-Its other half gates net-new **quality** findings — brimyr does not lint: it calls
-`chargate filter-sarif` across a process boundary and gates on the counts JSON that run
-writes (`quality.py`, `brimyr lint`, or `brimyr ci --quality-counts` to fold the verdict
-into the one summary and the one PR comment coverage already writes). Report-only by
-default; `.claude/SUBSYSTEMS.md` before you touch it.
+1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), runs its
+   tests **with coverage on**, and gates a PR **only on the lines the diff changed**
+   (diff-cover semantics, default 80%). Pre-existing uncovered code never blocks.
+   Non-blocking alongside: total coverage and a SonarQube analysis.
+2. **Net-new quality findings** — brimyr does not lint: it calls `chargate filter-sarif`
+   across a process boundary and gates on the counts JSON that run writes (`quality.py`,
+   `brimyr lint`, or `brimyr ci --quality-counts` to fold the verdict into the one
+   summary and the one PR comment coverage already writes). Off unless `quality: 'true'`;
+   `quality_fail_on` defaults to `none`, so report-only until it names a SARIF level
+   (`note`/`warning`/`error`/`any`); `.claude/SUBSYSTEMS.md` before you touch it.
 
 **Exit codes:** `0` pass · `1` below threshold / blocking findings · `2` broken run /
-setup / usage error. When both halves run, the worse of the two wins.
+setup / usage error.
 
 ## Commands
 

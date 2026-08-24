@@ -41,7 +41,8 @@ brimyr coverage --coverage-file coverage.xml --base "$BASE" \
 
 The full CI flow: detect the ecosystem(s), run the right test command with
 coverage, gate on patch coverage (PR events), and run `sonar-scanner`
-(non-blocking).
+(non-blocking). Given the [quality flags](#quality-flags) it decides the net-new
+quality half as well, and renders both verdicts into one summary and one comment.
 
 ```sh
 brimyr ci --mode auto --sonar-url https://sonar.example.com --sonar-project-key my-svc
@@ -71,7 +72,7 @@ behaviour.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--pr-comment` | off | Post/update the single patch-coverage comment on the PR. |
+| `--pr-comment` | off | Post/update the single comment on the PR — consolidated (coverage plus the quality block, when that half ran) on `ci` and `local`; quality only on `lint`, under its own marker. |
 | `--pr-number` | from the event | PR number (read from `$GITHUB_EVENT_PATH` otherwise). |
 | `--repo-slug` | `$GITHUB_REPOSITORY` | `owner/repo` being commented on. |
 | `--github-token-env` | `GITHUB_TOKEN` | Env var holding the comment token; needs `pull-requests: write`. |
@@ -99,9 +100,10 @@ becomes the worse of the two halves.
 
 ## `brimyr local`
 
-Run the patch-coverage gate against a **locally inferred** base (the repo's default
-branch) to check a branch before pushing. Same flags as `ci`, plus an optional
-`--base` to override the inferred base.
+Run the gate against a **locally inferred** base (the repo's default branch) to check
+a branch before pushing. Same flags as `ci` — including the quality and PR-comment
+ones — plus an optional `--base` to override the inferred base. In practice it is the
+coverage half you run locally, since the quality half needs Chargate's output.
 
 ```sh
 brimyr local                 # detect, run tests, gate vs the default branch

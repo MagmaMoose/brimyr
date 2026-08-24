@@ -1,5 +1,5 @@
 name: 'Brimyr'
-description: 'Patch-coverage gate: run tests with coverage and gate on the coverage of the lines a PR changed.'
+description: 'Quality assurance for a pull request: run tests with coverage and gate on the coverage of the lines a PR changed, and on the net-new quality findings it introduced.'
 author: 'Caleb Sargeant'
 branding:
   icon: 'umbrella'
@@ -18,7 +18,7 @@ inputs:
 
   # ── Gate behaviour ───────────────────────────────────────────────────────
   mode:
-    description: 'auto | pr (patch-coverage gate) | baseline (trend only, no gate).'
+    description: 'auto | pr (gate on patch coverage, and on quality when enabled) | baseline (trend only, no gate).'
     required: false
     default: 'auto'
   threshold:

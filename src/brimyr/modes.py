@@ -1,10 +1,11 @@
-"""Run-mode resolution: PR (patch-coverage gate) vs baseline (trend only).
+"""Run-mode resolution: PR (gate) vs baseline (trend only).
 
 * **PR events** → ``Mode.PR``: run tests with coverage, gate on patch coverage,
-  ship the report to SonarQube.
+  ship the report to SonarQube. When the quality half is on, it gates too.
 * **Push to default branch / scheduled** → ``Mode.BASELINE``: run tests with
-  coverage and ship to SonarQube for the trend — but **no** patch gate (there is
-  no PR diff to measure against).
+  coverage and ship to SonarQube for the trend — but **no** gate on either half
+  (there is no PR diff to measure against, so neither patch coverage nor the
+  net-new finding set means anything).
 """
 
 from __future__ import annotations
@@ -25,7 +26,13 @@ class Mode(StrEnum):
 
     @property
     def gates(self) -> bool:
-        """Whether this mode applies the patch-coverage gate."""
+        """Whether this mode gates at all.
+
+        Governs **both** halves: ``cli`` passes it to the patch-coverage gate and,
+        via ``decide_quality_gate(gate=...)``, to the net-new quality half. Baseline
+        has no diff, so a quality run there is report-only for a different reason than
+        a ``fail_on: none`` one — which is why the summary names which.
+        """
         return self is Mode.PR
 
 

@@ -6,6 +6,10 @@ Every input and output of the `magmamoose/brimyr` composite action, with the def
 code actually uses. Inputs are all optional. For the CLI behind it, see
 [CLI reference](cli.md).
 
+The action has two gates — **patch coverage** (always) and **net-new quality findings**
+(opt-in, `quality: 'true'`). They share one job summary, one PR comment, and one exit
+code, which is the worse of the two.
+
 ## Checkout
 
 | Input | Type | Default | Description |
@@ -17,7 +21,7 @@ code actually uses. Inputs are all optional. For the CLI behind it, see
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mode` | enum | `auto` | `auto`, `pr` (patch-coverage gate) or `baseline` (report only, never blocks). `auto` picks `pr` on a pull request and `baseline` on a push. |
+| `mode` | enum | `auto` | `auto`, `pr` (gate) or `baseline` (report only, never blocks). `auto` picks `pr` on a pull request and `baseline` on a push. It governs **both** halves: baseline has no diff, so neither patch coverage nor the net-new finding set is gated there. |
 | `threshold` | float | `80` | Patch coverage below this percentage fails the gate with exit `1`. |
 | `min_lines` | int | `20` | Diffs with fewer changed executable lines than this are not gated at all. Set `0` to gate every diff. See [Patch coverage](patch-coverage.md#the-sample-size-floor). |
 | `base_ref` | string | *(PR base SHA)* | Override the base ref or SHA to diff against. |
@@ -116,11 +120,12 @@ gates.
     summary and the comment. It never blocks. See
     [Quality findings](quality-findings.md#a-scan-that-completed-is-not-necessarily-a-full-one).
 
-!!! warning "`quality: true` needs a Chargate release that does not exist yet"
-    The pinned ref is `v2.11.25`, which has no `quality` flavor, so the nested step fails
-    on it and Brimyr reports a broken scan: exit `2`, `quality_gate_result` `error`.
-    Leave `quality` at `false` until Chargate ships the flavor and the pin here is bumped
-    to that release.
+!!! note "The pin has to carry the `quality` flavor"
+    `action.yml` pins `magmamoose/chargate@528a42e` (v2.11.27), which does — so
+    `quality: 'true'` is usable. v1.9.0 of this action pinned v2.11.25, which predates
+    the flavor; on that pin the nested step fails and Brimyr reports a broken scan
+    (exit `2`, `quality_gate_result` `error`) rather than a clean quality half. If you
+    pin Brimyr below v1.9.1, leave `quality` off.
 
 ## Runtime
 

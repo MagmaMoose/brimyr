@@ -2,8 +2,9 @@
 
 <!-- sources: action.yml, .pre-commit-hooks.yaml -->
 
-Brimyr runs your tests **on the runner**, so the test toolchain and dependencies
-must be present before the gate runs. Install them in a `setup` step (reusable
+Brimyr gates a pull request on two things: **patch coverage** (always) and **net-new
+quality findings** (opt-in). It runs your tests **on the runner**, so the test toolchain
+and dependencies must be present before the gate runs. Install them in a `setup` step (reusable
 workflow) or your own steps (composite action), or skip the run entirely by
 feeding a pre-made coverage report via `coverage_file`.
 
@@ -53,7 +54,8 @@ Every input and output is in the [Action reference](action.md).
 > **Wire it on `pull_request`, not `pull_request_target`.** Brimyr runs the PR's
 > *own* test code on the runner. `pull_request_target` runs that code with the base
 > repo's write token and secrets in scope, so a malicious fork could exfiltrate
-> them, exactly the privilege a coverage gate doesn't need. Both events gate if
+> them, exactly the privilege a gate that runs the PR's tests doesn't need. Both
+> events gate if
 > Brimyr sees them, but `pull_request` is the safe default; only reach for
 > `pull_request_target` if you fully control who can open PRs.
 
@@ -112,6 +114,26 @@ analyse C# at all, so `dotnet sonarscanner` wraps the build instead of following
 Java needs `sonar_args: '-Dsonar.java.binaries=...'` or the analysis is skipped with a
 warning. Both are covered in [SonarQube](sonarqube.md).
 
+## Quality findings
+
+Off by default. Turn it on and the action runs
+[Chargate](https://github.com/MagmaMoose/chargate) as a nested step and folds the
+net-new findings into the same summary and the same comment as coverage:
+
+```yaml
+- uses: magmamoose/brimyr@v1
+  with:
+    quality: 'true'
+    # quality_fail_on: 'error'   # leave unset to stay report-only
+```
+
+It needs **Docker** on the runner. `quality_fail_on` defaults to `none`, so the half
+ships **report-only**: findings are counted and shown, nothing blocks. Measure a release
+cycle before picking a level — the failure mode here is abandonment, not error.
+
+The threshold speaks SARIF levels (`note`, `warning`, `error`, `any`), not Chargate's
+severity bands. Full detail, and why, in [Quality findings](quality-findings.md).
+
 ## Local development
 
 ```sh
@@ -135,9 +157,11 @@ are unaffected until you opt in with `--group docs`.
 
 ## PR comment
 
-Brimyr can post **one** consolidated patch-coverage comment on the pull request: the percentage, the threshold, and the changed lines the tests never executed. It
-is updated in place on every push rather than stacked, so a long-running PR keeps
-exactly one comment.
+Brimyr can post **one** consolidated comment on the pull request. It carries the
+coverage verdict — the percentage, the threshold, and the changed lines the tests never
+executed — and, when the quality half is on, the net-new findings beneath it, under a
+second heading in the same comment. It is updated in place on every push rather than
+stacked, so a long-running PR keeps exactly one comment.
 
 ```yaml
 permissions:
@@ -173,5 +197,5 @@ problem with it costs the byline and nothing else.
 
 Both `pr_comment` and `token_broker_url` are inputs of the **composite action**;
 the reusable workflow does not forward them today. See
-[PR comment](pr-comment.md) for what the comment looks like, how the
-single-comment marker works, and the full list of broker failure messages.
+[PR comment](pr-comment.md) for what both blocks look like, how the two
+comment markers work, and the full list of broker failure messages.

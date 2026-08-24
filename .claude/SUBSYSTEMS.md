@@ -96,15 +96,20 @@ really about.
   MegaLinter's quality half over a mature repo is far denser than its security half, and
   a first PR going red with hundreds of findings is how a gate becomes decoration. The
   `quality_fail_on` output exists because report-only and passing both print `pass`.
-- **The pinned chargate ref must contain the `quality` flavor.** `action.yml` currently
-  pins v2.11.25, which does **not** — `quality: true` only starts working once chargate
-  ships that release and the pin here is bumped to it. The flavor is synthetic: there is
-  no `megalinter-quality` image, so chargate runs the five standalone linters on every
-  architecture.
+- **The pinned chargate ref must contain the `quality` flavor.** `action.yml` pins
+  `528a42e` (v2.11.27), which does. v1.9.0 shipped against v2.11.25, which did not, and
+  on that pin the nested step fails and brimyr reports a broken scan — exit 2, not a
+  clean quality half. Re-check this after any Dependabot bump that moves the pin
+  backwards. The flavor is synthetic: there is no `megalinter-quality` image, so
+  chargate runs the five standalone linters on every architecture.
 - **Two comment markers, one comment each.** `brimyr ci --quality-counts` renders both
-  verdicts into ONE body under `SUMMARY_MARKER` — that consolidated view is the reason
-  the flag exists, so prefer it. Standalone `brimyr lint` owns `QUALITY_MARKER`, because
-  a shared marker would mean whichever subcommand ran last erased the other's verdict.
+  verdicts into ONE body under `SUMMARY_MARKER` (`<!-- brimyr:pr-summary -->`) — that
+  consolidated view is the reason the flag exists, so prefer it, and it is what the
+  action does. Standalone `brimyr lint` owns `QUALITY_MARKER`
+  (`<!-- brimyr:quality-summary -->`), because a shared marker would mean whichever
+  subcommand ran last erased the other's verdict. Inside the consolidated body the two
+  blocks are `## Brimyr: Quality Assurance` (coverage) and `## Brimyr: Net-new findings`
+  (quality) — sibling headings, deliberately not nested.
 - **The process exit code is the worse of the two halves** on the shared `0 < 1 < 2`
   scale: clean coverage never launders a blocking quality finding, and a broken test run
   still reports 2 when quality is clean.
