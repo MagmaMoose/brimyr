@@ -3,6 +3,7 @@ site_description: >-
   Quality assurance for a pull request — auto-detect the ecosystem, run tests
   with coverage, and gate on the coverage of the lines a PR changed (diff-cover
   style) plus the net-new quality findings it introduced.
+site_url: https://magmamoose.github.io/brimyr/
 repo_url: https://github.com/MagmaMoose/brimyr
 repo_name: MagmaMoose/brimyr
 edit_uri: edit/main/docs/
