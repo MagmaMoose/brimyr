@@ -13,7 +13,8 @@ calls `chargate filter-sarif` across a process boundary and gates on the counts 
 (`quality.py`, `brimyr lint`). Off unless `quality: 'true'`; `quality_fail_on` defaults
 to `none`, so report-only until it names a SARIF level (`note`/`warning`/`error`/`any`).
 
-Non-blocking alongside: total coverage, a SonarQube analysis.
+Non-blocking alongside: total coverage, and a SonarQube analysis when `sonar_url` +
+`sonar_token` are set (skipped with a reason otherwise).
 
 @.claude/QUICK_START.md
 @.claude/COMMON_MISTAKES.md

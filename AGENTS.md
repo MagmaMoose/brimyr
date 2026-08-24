@@ -12,7 +12,9 @@ the subject, not the tool. One CLI, two surfaces: `action.yml` and
 1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), runs its
    tests **with coverage on**, and gates a PR **only on the lines the diff changed**
    (diff-cover semantics, default 80%). Pre-existing uncovered code never blocks.
-   Non-blocking alongside: total coverage and a SonarQube analysis.
+   Non-blocking alongside: total coverage, and a SonarQube analysis when `sonar_url` and
+   `sonar_token` are both set and `sonar-scanner` is on PATH (`run_scanner` returns a
+   `skipped (...)` result otherwise, and never fails the run).
 2. **Net-new quality findings** — brimyr does not lint: it calls `chargate filter-sarif`
    across a process boundary and gates on the counts JSON that run writes (`quality.py`,
    `brimyr lint`, or `brimyr ci --quality-counts` to fold the verdict into the one
