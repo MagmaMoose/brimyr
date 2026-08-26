@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-21",
+  "generated": "2026-08-26",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -314,12 +314,13 @@
     },
     "ci.workflows": {
       "path": ".github/workflows/",
-      "purpose": "Repo-owned GitHub Actions. ci.yml has TWO jobs (test, broker) because broker/ is a separate project excluded from the root ruff and pytest config. coverage.yml is brimyr gating brimyr: it runs both suites itself and feeds the action both reports, because a single auto-detected run cannot see broker/. major-tag.yml keeps the floating v1 tag on the latest release and broker-publish.yml uploads the Lambda zip on release \u2014 both are repo-owned precisely because release.yml is caldrith-provisioned and overwritten in place.",
+      "purpose": "Repo-owned GitHub Actions. ci.yml has TWO jobs (test, broker) because broker/ is a separate project excluded from the root ruff and pytest config. coverage.yml is brimyr gating brimyr: it runs both suites itself and feeds the action both reports, because a single auto-detected run cannot see broker/. major-tag.yml keeps the floating v1 tag on the latest release and broker-publish.yml uploads the Lambda zip on release \u2014 both are repo-owned precisely because release.yml is caldrith-provisioned and overwritten in place. docs.yml builds the MkDocs (Material) site and publishes it to GitHub Pages on push to main when docs/, mkdocs.yml, pyproject.toml, or uv.lock change.",
       "exports": [
         "broker-publish.yml",
         "broker-smoke.yml",
         "ci.yml",
         "coverage.yml",
+        "docs.yml",
         "major-tag.yml",
         "release.yml",
         "security.yml"
