@@ -124,11 +124,12 @@ brimyr lint --counts chargate-reports/counts.json \
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--counts` | (required) | Chargate's `filter-sarif --counts-json` output. The gate's only input. Required unless `--scan-broken` says there is nothing worth reading. |
+| `--counts` | none | Chargate's `filter-sarif --counts-json` output. The gate's only input. Required unless `--scan-broken` says there is nothing worth reading. |
 | `--findings` | none | Chargate's `filter-sarif --out` net-new SARIF. Read only to list findings in the summary; a result count that contradicts `--counts` is a hard error (exit `2`). |
 | `--fail-on` | `none` | SARIF level at or above which a net-new finding blocks: `none` (report only), `note`, `warning`, `error`, `any`. |
 | `--no-gate` | off | Always exit `0` (report only). |
-| `--scan-note` | none | Linters the scan could not run, stated in the summary next to the count. Never blocks. |
+| `--scan-note` | none | Linters the scan could not run, stated in the summary next to the count. A completed scan is not necessarily a full one. Never blocks. |
+| `--scan-broken` | off | The quality scan did not complete. Skips every read and reports a tool error (exit `2`) — the counts file a failed scan leaves behind is a row of zeros, which is what a clean PR looks like. |
 | `--json-out` | none | Write the quality summary as JSON here. |
 | `--quiet` | off | Suppress the human summary. |
 
