@@ -1,3 +1,4 @@
+INHERIT: mkdocs.base.yml
 site_name: Brimyr
 site_description: >-
   Quality assurance for a pull request — auto-detect the ecosystem, run tests
@@ -7,30 +8,6 @@ site_url: https://magmamoose.github.io/brimyr/
 repo_url: https://github.com/MagmaMoose/brimyr
 repo_name: MagmaMoose/brimyr
 edit_uri: edit/main/docs/
-
-theme:
-  name: material
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: purple
-      accent: purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: purple
-      accent: purple
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
-  features:
-    - navigation.instant
-    - navigation.sections
-    - navigation.top
-    - content.code.copy
-    - toc.follow
 
 nav:
   - Home: index.md
@@ -47,8 +24,3 @@ nav:
   - Action reference: action.md
   - CLI reference: cli.md
 
-markdown_extensions:
-  - admonition
-  - pymdownx.superfences
-  - toc:
-      permalink: true

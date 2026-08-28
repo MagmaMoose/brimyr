@@ -4,7 +4,7 @@ version = "1.9.2"
 description = "Quality assurance for a pull request: auto-detect the repo's ecosystem, run tests with coverage, and gate on the coverage of the lines this PR changed (diff-cover style) plus the net-new quality findings it introduced."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "Apache-2.0"
 authors = [{ name = "Caleb Sargeant", email = "caleb@magmamoose.com" }]
 keywords = ["coverage", "patch-coverage", "diff-cover", "sonarqube", "gate", "lcov", "cobertura"]
 # The patch-coverage core is intentionally stdlib-only so it stays trivially
