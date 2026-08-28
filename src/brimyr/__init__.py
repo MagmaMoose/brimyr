@@ -18,4 +18,4 @@ subject, not the tool — brimyr's quality half calls chargate's engine.
 
 from __future__ import annotations
 
-__version__ = "1.9.2"
+__version__ = "1.9.3"
