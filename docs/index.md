@@ -4,7 +4,7 @@
 
 **Brimyr is quality assurance for a pull request: it gates on the coverage of the
 lines that PR changed, and on the net-new quality findings that PR introduced.** Point
-it at any repo and it figures out the rest — it detects the ecosystem, runs the test
+it at any repo and it figures out the rest, it detects the ecosystem, runs the test
 suite with coverage instrumentation on, and gates on the coverage of the changed lines
 (diff-cover semantics), blocking below a threshold (default **80%**). Pre-existing
 uncovered code never blocks. Turn `quality: 'true'` on and the same run also classifies
@@ -21,7 +21,7 @@ estate in several languages, that wiring *is* the project.
 
 Brimyr is **quality assurance**; [Chargate](https://github.com/MagmaMoose/chargate)
 is **security assurance**, and [Diatreme](https://github.com/MagmaMoose/diatreme)
-builds and releases. Brimyr and Chargate are twins, not competitors — Chargate gates
+builds and releases. Brimyr and Chargate are twins, not competitors, Chargate gates
 net-new *security* findings, Brimyr gates coverage **and** net-new *quality*
 findings. The line between them is the **subject**, not the tool: Brimyr's quality
 half runs Chargate's net-new engine rather than growing its own
@@ -51,7 +51,7 @@ otherwise the step is skipped with a reason and nothing fails. See [SonarQube](s
   the threshold. Computed **locally**; no SonarQube involvement.
 - **Report-only by default: the net-new quality gate.** The quality findings *this
   PR introduced*, classified against that same diff. Off unless `quality: 'true'`,
-  and even then `quality_fail_on` defaults to `none` — it counts and reports, and
+  and even then `quality_fail_on` defaults to `none`, it counts and reports, and
   blocks only at a SARIF level you choose.
 - **Non-blocking, and opt-in: one `sonar-scanner` run.** Off unless `sonar_url` and
   `sonar_token` are set. Sonar's native quality analysis plus
@@ -81,13 +81,13 @@ diff the coverage gate uses, and folds that verdict into the same job summary an
 same PR comment as coverage. The job exits on the worse of the two.
 
 Brimyr implements none of that classification. Chargate already owns a finished net-new
-engine, so Brimyr does not import it, vendor it or re-implement it — it **calls it as a
+engine, so Brimyr does not import it, vendor it or re-implement it, it **calls it as a
 nested step**: a shared package would buy version skew, lockfile drift and a diamond
 dependency inside one job, and a subprocess in its own environment has none of those
 properties. That is
 [ADR 0002](https://github.com/MagmaMoose/brimyr/blob/main/.claude/decisions/0002-quality-gate-calls-chargate.md).
 Chargate's own `fail_on` is pinned to `none` there, so it can never set the job's exit
-code — it reports, Brimyr decides.
+code, it reports, Brimyr decides.
 
 `quality_fail_on` defaults to `none`, which makes it **report-only** until you say
 otherwise. MegaLinter's quality half over a mature repo is far denser than its security
@@ -97,8 +97,8 @@ level. See [Quality findings](quality-findings.md).
 
 A scan that never ran is not a clean one. The nested step is `continue-on-error`, so it
 cannot take the coverage gate down with it, but Brimyr goes by that step's `outcome`
-rather than by the counts file it may have left behind — a failed scan can leave a
-well-formed row of zeros on disk, which is what a clean PR looks like — and reports a
+rather than by the counts file it may have left behind, a failed scan can leave a
+well-formed row of zeros on disk, which is what a clean PR looks like, and reports a
 tool error instead: exit **2**, `quality_gate_result` `error`. Nor is a scan that
 *completed* necessarily a full one: when Chargate could not start a linter it says which,
 and Brimyr states that shortfall beside the count rather than passing a smaller scan off

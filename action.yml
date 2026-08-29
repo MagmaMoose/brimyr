@@ -130,6 +130,15 @@ inputs:
     default: '8.1.0.6389'
 
   # ── Output ───────────────────────────────────────────────────────────────
+  test_timeout:
+    description: >-
+      Kill the test run after N seconds (default 3600). A suite that has not finished in
+      an hour is hung, and without a limit it holds the runner until the job timeout,
+      which on GitHub-hosted runners is six hours. A timeout is a BROKEN run (exit 2),
+      never 0% coverage. Set to '0' to wait indefinitely.
+    required: false
+    default: '3600'
+
   html_report:
     description: >-
       Render the coverage reports to a browsable HTML report and upload it as a build
@@ -445,6 +454,7 @@ runs:
         MODE_IN: ${{ inputs.mode }}
         THRESHOLD_IN: ${{ inputs.threshold }}
         MIN_LINES_IN: ${{ inputs.min_lines }}
+        TEST_TIMEOUT_IN: ${{ inputs.test_timeout }}
         STRIP_PREFIX_IN: ${{ inputs.strip_prefix }}
         EXCLUDE_IN: ${{ inputs.exclude }}
         ECOSYSTEM_IN: ${{ inputs.ecosystem }}
@@ -493,6 +503,7 @@ runs:
           --mode "$MODE_IN"
           --threshold "$THRESHOLD_IN"
           --min-lines "$MIN_LINES_IN"
+          --test-timeout "$TEST_TIMEOUT_IN"
           --repo "."
           --head "$head"
           --json-out "$json_abs")
@@ -500,14 +511,20 @@ runs:
         [ -n "$base" ] && args+=(--base "$base")
         [ -n "$TEST_COMMAND_IN" ] && args+=(--test-command "$TEST_COMMAND_IN")
 
+        # Every comma-separated input below is trimmed. `exclude: "*Migrations*, *.Designer.cs"`
+        # is the natural way to write a list in YAML, and untrimmed it yields the glob
+        # " *.Designer.cs" with a leading space, which matches nothing. The generated files
+        # stay in the denominator and the PR fails for a reason nobody can see.
+        trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+
         IFS=',' read -ra _eco <<< "$ECOSYSTEM_IN"
-        for e in "${_eco[@]}"; do [ -n "$e" ] && args+=(--ecosystem "$e"); done
+        for e in "${_eco[@]}"; do e="$(trim "$e")"; [ -n "$e" ] && args+=(--ecosystem "$e"); done
         IFS=',' read -ra _cov <<< "$COVERAGE_FILE_IN"
-        for c in "${_cov[@]}"; do [ -n "$c" ] && args+=(--coverage-file "$c"); done
+        for c in "${_cov[@]}"; do c="$(trim "$c")"; [ -n "$c" ] && args+=(--coverage-file "$c"); done
         IFS=',' read -ra _sp <<< "$STRIP_PREFIX_IN"
-        for p in "${_sp[@]}"; do [ -n "$p" ] && args+=(--strip-prefix "$p"); done
+        for p in "${_sp[@]}"; do p="$(trim "$p")"; [ -n "$p" ] && args+=(--strip-prefix "$p"); done
         IFS=',' read -ra _ex <<< "$EXCLUDE_IN"
-        for e in "${_ex[@]}"; do [ -n "$e" ] && args+=(--exclude "$e"); done
+        for e in "${_ex[@]}"; do e="$(trim "$e")"; [ -n "$e" ] && args+=(--exclude "$e"); done
 
         if [ -n "$SONAR_URL_IN" ]; then
           args+=(--sonar-url "$SONAR_URL_IN")
@@ -515,7 +532,7 @@ runs:
           [ -n "$SONAR_ORG_IN" ] && args+=(--sonar-organization "$SONAR_ORG_IN")
           [ -n "$SONAR_SOURCES_IN" ] && args+=(--sonar-sources "$SONAR_SOURCES_IN")
           IFS=',' read -ra _sa <<< "$SONAR_ARGS_IN"
-          for a in "${_sa[@]}"; do [ -n "$a" ] && args+=(--sonar-arg "$a"); done
+          for a in "${_sa[@]}"; do a="$(trim "$a")"; [ -n "$a" ] && args+=(--sonar-arg "$a"); done
         fi
 
         # Deliberately NOT guarded on the file existing. If the Chargate step failed

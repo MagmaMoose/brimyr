@@ -155,3 +155,23 @@ def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
     (tmp_path / "vitest.config.ts").write_text("export default {}\n")
     found = detect_ecosystems(tmp_path)
     assert [e.key for e in found] == ["python", "javascript"]  # nosec B101
+
+
+def test_detect_dotnet_from_a_slnx_solution(tmp_path):
+    """`.slnx` is the default solution format from .NET 10 onward.
+
+    `dotnet new sln` writes `Foo.slnx`, and a repo scaffolded with current tooling has
+    no `.sln` at all. Projects conventionally live under `src/`, and marker globbing only
+    looks at the root, so the solution file is frequently the only marker present:
+    without this, a whole modern solution is silently undetected and the run fails with
+    "no ecosystem detected".
+    """
+    (tmp_path / "Demo.slnx").write_text("<Solution />\n")
+    (tmp_path / "src" / "Core").mkdir(parents=True)
+    (tmp_path / "src" / "Core" / "Core.csproj").write_text("<Project />\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["dotnet"]  # nosec B101
+
+
+def test_dotnet_still_detected_from_a_classic_sln(tmp_path):
+    (tmp_path / "Demo.sln").write_text("Microsoft Visual Studio Solution File\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["dotnet"]  # nosec B101

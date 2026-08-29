@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess  # nosec B404 - fixtures build fake CompletedProcess objects; nothing runs
 
 from brimyr.html_report import DEFAULT_REPORT_TYPES, build_args, render
@@ -77,3 +78,47 @@ class TestFailureIsolation:
         result = render(["a.xml"], "out/html", runner=run)
         assert result.ok is True  # nosec B101
         assert str(result.target_dir) == "out/html"  # nosec B101
+
+
+class TestEveryCommandThatOffersItActsOnIt:
+    """`--html-report` is on the shared diff args, so `coverage` and `local` take it too.
+
+    It used to be read only by the `ci` flow, so `brimyr coverage --html-report DIR`
+    accepted the flag, exited 0, and produced nothing. Accepting an option and then
+    ignoring it is the same class of failure as a coverage number that quietly means
+    nothing: the run looks fine and the artifact never appears.
+    """
+
+    def test_cmd_coverage_renders(self, monkeypatch, tmp_path):
+        import brimyr.cli as cli
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            cli.html_report,
+            "render",
+            lambda reports, target, repo=".", **kw: (
+                calls.append(list(reports))
+                or cli.html_report.HtmlReportResult(True, "ok", target_dir=tmp_path)
+            ),
+        )
+
+        cov = tmp_path / "coverage.xml"
+        cov.write_text(
+            "<coverage><packages><package><classes>"
+            '<class filename="a.py"><lines><line number="1" hits="1"/></lines></class>'
+            "</classes></package></packages></coverage>"
+        )
+        args = argparse.Namespace(
+            coverage_file=[str(cov)],
+            html_report=str(tmp_path / "out"),
+            repo=".",
+            quiet=True,
+        )
+        assert cli._maybe_render_html(args, [str(cov)]) == "ok"  # nosec B101
+        assert calls == [[str(cov)]]  # nosec B101 - the report it ingested is what it renders
+
+    def test_absent_flag_is_a_no_op(self):
+        import brimyr.cli as cli
+
+        args = argparse.Namespace(html_report="", repo=".")
+        assert cli._maybe_render_html(args, ["coverage.xml"]) is None  # nosec B101

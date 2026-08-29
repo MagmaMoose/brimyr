@@ -73,10 +73,10 @@ injected so the tests need no network, and neither ever raises out into the gate
    failure-isolated: it never raises, so a Sonar outage can't fail the gate.
 8. **`quality.decide_quality_gate`** (optional) decides the net-new half on `fail_on`,
    over the counts `cli` read and `quality.parse_counts` validated out of the JSON the
-   nested Chargate step left behind — or, told the scan never completed,
+   nested Chargate step left behind, or, told the scan never completed,
    `quality.broken_decision` reads nothing and reports a tool error. Same `Mode.gates`
    flag as coverage, so baseline gates neither.
-9. **`report`** writes the GitHub job summary and step outputs — `render_summary`'s
+9. **`report`** writes the GitHub job summary and step outputs, `render_summary`'s
    coverage block, with `render_quality_summary`'s net-new block appended when that
    half ran.
 10. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
@@ -86,7 +86,7 @@ injected so the tests need no network, and neither ever raises out into the gate
     for a `Brimyr[bot]` installation token; on any failure it returns `None` and the
     job's `GITHUB_TOKEN` is used instead. Both are failure-isolated, like Sonar.
 
-Baseline mode skips the gating — both halves. It computes coverage against an empty
+Baseline mode skips the gating, both halves. It computes coverage against an empty
 `DiffIndex`, ships to Sonar, and never blocks; a baseline quality run is report-only
 for its own reason (no diff, so no net-new set worth gating), which the summary names
 rather than blaming the threshold.
@@ -103,7 +103,7 @@ re-implement it: `action.yml` runs `magmamoose/chargate` as a nested step, and
 is the verdict's only input; the filtered SARIF is display-only, skimmed for the
 `path:line [rule]` strings the summary lists. Anything unreadable, unrecognised, or
 self-contradicting is exit `2`, because a half that cannot evaluate must not report a
-pass — and so is a scan that never completed, which `action.yml` detects from the nested
+pass, and so is a scan that never completed, which `action.yml` detects from the nested
 step's `outcome` and passes on as `--quality-scan-broken`, reading no file at all.
 
 `brimyr lint` runs that half on its own, under its own PR-comment marker.
