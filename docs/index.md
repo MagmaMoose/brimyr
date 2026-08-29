@@ -138,6 +138,29 @@ convenience, and a convenience must never turn a green PR red. See
 
 `mode: auto` (default) picks this from the event; force it with `mode: pr|baseline`.
 
+## Why patch coverage?
+
+Requiring 80% coverage on a whole legacy codebase is a non-starter; ignoring
+coverage on new code lets it rot. Patch coverage splits the difference: hold *new
+and changed* lines to a bar, leave the back-catalogue alone.
+
+- **Gate** on what *this PR* changed → actionable, no legacy-debt noise.
+- **Ship** the full coverage to SonarQube → the long-run trend, and Sonar's own
+  quality gate (not to be confused with Brimyr's net-new quality gate above).
+
+## Rollout cost is the point
+
+The comparison that matters is not "which tool computes coverage" — it is what it takes
+to switch this on across an estate. For eight repos in four languages:
+
+| | SonarQube | Brimyr |
+| --- | --- | --- |
+| Server to host / licence | a server, or a per-committer plan | none |
+| Per repo | a project, a token, a quality gate, workflow YAML | one `uses:` line |
+| Per ecosystem | a *different scanner* — `dotnet sonarscanner` for .NET, `mvn sonar:sonar` for Java, the CLI for the rest | detected |
+| Producing the coverage report | yours to work out, per language | it runs your tests |
+| Per-PR diff coverage | Developer Edition and above | included |
+
 ## License
 
 MIT.
