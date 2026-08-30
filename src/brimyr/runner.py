@@ -71,54 +71,58 @@ def parse_coverage_text(text: str, fmt: CoverageFormat) -> CoverageReport:
     raise IngestError(f"unsupported coverage format: {fmt}")
 
 
-# Maven and Gradle source roots, in the order they are tried. JaCoCo reports a path
-# relative to one of these and never says which, so the only way to recover the
-# repo-relative path is to test each against the filesystem.
-_JVM_SOURCE_ROOTS = (
-    "src/main/java",
-    "src/main/kotlin",
-    "src/main/scala",
-    "src/test/java",
-    "src/test/kotlin",
-)
-
-
 def _jacoco_path_resolver(report_path: Path, repo: Path) -> Callable[[str], str]:
     """Map a JaCoCo source-root-relative path to a repo-relative one.
 
     JaCoCo names files as ``<package>/<sourcefile>`` with **no module prefix**, so in a
-    multi-module reactor `isam3d-case` and `isam3d-user` both report their own
-    `nl/example/Service.java` under that identical string. `merge_reports` keys by
-    string and folds covered-wins, so the covered module's data silently answers for the
-    uncovered one and a changed line there is reported as covered. Measured: 100% where
-    the truth was 0%.
+    multi-module build `isam3d-case` and `isam3d-user` both report their own
+    `nl/example/Service.java` under that identical string. `merge_reports` keys by string
+    and folds covered-wins, so the covered module's data silently answers for the
+    uncovered one. Measured: 100% where the truth was 0%.
 
-    The module root is recoverable from where the report was found
-    (``<module>/target/site/jacoco/jacoco.xml``), and the source root by testing the
-    conventional ones against disk. Anything that does not resolve is returned
-    unchanged, so an unusual layout degrades to the old behaviour rather than inventing
-    a path that matches nothing.
+    The module root is recovered by walking UP from the report and testing each ancestor
+    against the conventional source roots, rather than by stripping known directory names.
+    The layouts differ by build tool and by configuration:
+
+        <module>/target/site/jacoco/jacoco.xml                 Maven, 3 levels up
+        <module>/build/reports/jacoco/test/jacocoTestReport.xml  Gradle, 4 levels up
+
+    and a name-stripping loop that knows `target`/`site`/`jacoco` stops dead on Gradle's
+    `test` directory. Walking up asks the filesystem instead of guessing the shape.
+
+    Anything that does not resolve is returned unchanged, so an unusual layout degrades
+    to the old behaviour rather than inventing a path that matches nothing, which would
+    drop the file from the denominator: the same bug by another route.
     """
-    module = report_path.parent
-    for marker in ("jacoco", "site", "target"):
-        if module.name == marker:
-            module = module.parent
-    candidates: list[Path] = []
-    for root in _JVM_SOURCE_ROOTS:
-        candidates.append(module / root)
+    #: Maven and Gradle source roots. JaCoCo reports a path relative to one of these and
+    #: never says which, so each is tested against the filesystem.
+    roots = (
+        "src/main/java",
+        "src/main/kotlin",
+        "src/main/scala",
+        "src/main/groovy",
+        "src/test/java",
+        "src/test/kotlin",
+    )
+    # Enough to clear the deepest layout above with room to spare; bounded so an odd
+    # report location cannot walk out to the filesystem root.
+    ancestors = list(report_path.parents)[:6]
     cache: dict[str, str] = {}
 
     def resolve(rel: str) -> str:
         if rel in cache:
             return cache[rel]
         out = rel
-        for base in candidates:
-            if (base / rel).is_file():
-                try:
-                    out = (base / rel).relative_to(repo).as_posix()
-                except ValueError:
-                    out = (base / rel).as_posix()
-                break
+        for base in ancestors:
+            for root in roots:
+                candidate = base / root / rel
+                if candidate.is_file():
+                    try:
+                        out = candidate.relative_to(repo).as_posix()
+                    except ValueError:
+                        out = candidate.as_posix()
+                    cache[rel] = out
+                    return out
         cache[rel] = out
         return out
 

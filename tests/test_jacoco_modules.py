@@ -95,3 +95,59 @@ def test_an_unresolvable_path_is_left_alone(tmp_path):
 def test_the_parser_stays_pure_without_a_resolver():
     report = parse_jacoco(_REPORT.format(mod="m", ci="1", mi="0"))
     assert [f.path for f in report.files] == ["nl/x/Service.java"]  # nosec B101
+
+
+def _gradle_reactor(tmp_path: Path) -> Path:
+    """Gradle puts the report four levels down, with `test` as the leaf directory.
+
+    A resolver that strips known names (`target`, `site`, `jacoco`) stops dead on `test`
+    and never finds the module root, so Gradle multi-module builds kept the collapse this
+    whole mechanism exists to prevent. `detect.py` globs
+    `**/build/reports/jacoco/**/*.xml`, so they are firmly in scope.
+    """
+    for mod, covered in (("svc-a", True), ("svc-b", False)):
+        src = tmp_path / mod / "src/main/kotlin/nl/x"
+        src.mkdir(parents=True)
+        (src / "Service.kt").write_text("class Service\n")
+        rep = tmp_path / mod / "build/reports/jacoco/test"
+        rep.mkdir(parents=True)
+        ci, mi = ("5", "0") if covered else ("0", "4")
+        (rep / "jacocoTestReport.xml").write_text(
+            f'<report name="{mod}"><package name="nl/x">'
+            f'<sourcefile name="Service.kt"><line nr="11" mi="{mi}" ci="{ci}"/></sourcefile>'
+            "</package></report>"
+        )
+    return tmp_path
+
+
+def test_gradle_modules_also_resolve(tmp_path):
+    repo = _gradle_reactor(tmp_path)
+    paths = sorted(
+        f.path
+        for p in sorted(repo.glob("*/build/reports/jacoco/test/jacocoTestReport.xml"))
+        for f in ingest_file(p, CoverageFormat.JACOCO, repo).files
+    )
+    assert paths == [  # nosec B101
+        "svc-a/src/main/kotlin/nl/x/Service.kt",
+        "svc-b/src/main/kotlin/nl/x/Service.kt",
+    ]
+
+
+def test_gradle_covered_module_does_not_answer_for_the_uncovered_one(tmp_path):
+    repo = _gradle_reactor(tmp_path)
+    merged = merge_reports(
+        [
+            ingest_file(p, CoverageFormat.JACOCO, repo)
+            for p in sorted(repo.glob("*/build/reports/jacoco/test/jacocoTestReport.xml"))
+        ]
+    )
+    diff = DiffIndex(
+        (
+            FileDiff(
+                path="svc-b/src/main/kotlin/nl/x/Service.kt",
+                status="modified",
+                added_ranges=((11, 11),),
+            ),
+        )
+    )
+    assert compute_patch_coverage(diff, merged).percent == 0.0  # nosec B101
