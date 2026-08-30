@@ -305,6 +305,7 @@ runs:
       shell: bash
       env:
         SCANNER_VERSION: ${{ inputs.sonar_scanner_version }}
+        ECOSYSTEM_IN: ${{ inputs.ecosystem }}
       run: |
         set -euo pipefail
 
@@ -319,12 +320,25 @@ runs:
             echo "::error::sonar_scanner_version must be digits and dots only"
             exit 1 ;;
         esac
-        # C#/VB.NET cannot be analyzed by the CLI scanner at all — Sonar documents this —
-        # so a .NET repo needs the MSBuild-integrated scanner instead. Pick by what is in
-        # the tree, not by an input, so a consumer cannot get it wrong.
-        if command -v dotnet >/dev/null 2>&1 \
-           && find . -maxdepth 4 \( -name '*.sln' -o -name '*.csproj' -o -name '*.vbproj' \) \
-                -not -path './.git/*' -print -quit | grep -q .; then
+        # C#/VB.NET cannot be analyzed by the CLI scanner at all (Sonar documents this),
+        # so a .NET repo needs the MSBuild-integrated scanner instead.
+        #
+        # This test MUST agree with `detect.py`'s .NET markers, because brimyr picks the
+        # strategy and this step picks the binary. When they disagree the job installs one
+        # scanner and then runs the other, which surfaces as `skipped (not found on PATH)`
+        # on a green build with no analysis uploaded. Two ways they used to disagree:
+        # the extension list was missing `*.slnx` and `*.fsproj`, and this searched four
+        # levels deep while `_has_marker` globs the repo root only. Both are matched here,
+        # and `ecosystem: dotnet` is honoured because forcing it is exactly what a consumer
+        # does when root detection does not fire.
+        is_dotnet=false
+        case ",$ECOSYSTEM_IN," in *,dotnet,*) is_dotnet=true ;; esac
+        if [ "$is_dotnet" = false ] && find . -maxdepth 1 \
+             \( -name '*.sln' -o -name '*.slnx' -o -name '*.csproj' \
+                -o -name '*.fsproj' -o -name '*.vbproj' \) -print -quit | grep -q .; then
+          is_dotnet=true
+        fi
+        if command -v dotnet >/dev/null 2>&1 && [ "$is_dotnet" = true ]; then
           # Already-installed is not an error: `dotnet tool install` exits non-zero when
           # the tool is present, which is the normal case on a self-hosted or cached
           # runner. Fall through to update, then to "it is already there".

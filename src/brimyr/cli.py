@@ -27,6 +27,7 @@ both halves exits with the worse of the two.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -386,9 +387,45 @@ def cmd_lint(args: argparse.Namespace) -> int:
 # ── coverage: the pure patch-coverage computation ────────────────────────────
 
 
+def _expand_coverage_specs(
+    specs: list[tuple[Path, CoverageFormat]], repo: str | Path = "."
+) -> list[tuple[Path, CoverageFormat]]:
+    """Expand any glob in a `--coverage-file` path.
+
+    `dotnet test` writes each test project's report to `TestResults/<random-guid>/
+    coverage.cobertura.xml`, so the paths are not knowable ahead of time. Without glob
+    support a consumer cannot name them, which means they cannot feed Brimyr the reports
+    their pipeline ALREADY produced and must let it re-run the whole suite instead: on a
+    1200-file solution that doubles the PR's CI time. An action input is interpolated
+    into YAML, so the shell never expands it for them either.
+
+    A glob matching nothing is an ERROR, not an empty list. Silently contributing no
+    reports is the vacuous-100% failure this tool exists to prevent.
+    """
+    out: list[tuple[Path, CoverageFormat]] = []
+    for path, fmt in specs:
+        text = str(path)
+        if not any(ch in text for ch in "*?["):
+            out.append((path, fmt))
+            continue
+        if path.is_absolute():
+            matches = sorted(Path(p) for p in glob.glob(text, recursive=True))
+        else:
+            matches = sorted(Path(repo).glob(text))
+        if not matches:
+            raise ValueError(
+                f"coverage-file pattern {text!r} matched no files. That would silently "
+                "contribute no coverage and pass, so it is an error."
+            )
+        out.extend((m, fmt) for m in matches)
+    return out
+
+
 def cmd_coverage(args: argparse.Namespace) -> int:
     try:
-        specs = [_parse_coverage_arg(s) for s in args.coverage_file]
+        specs = _expand_coverage_specs(
+            [_parse_coverage_arg(s) for s in args.coverage_file], args.repo
+        )
     except ValueError as exc:
         return _fail(str(exc))
 
@@ -445,6 +482,50 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 # ── ci / local: the full flow ────────────────────────────────────────────────
 
 
+#: Sonar's coverage property per report format, where the format determines it. Cobertura
+#: is deliberately absent: Python and .NET both emit it and they use different properties,
+#: so guessing would ship the coverage under a property Sonar ignores, which looks exactly
+#: like success.
+_FORMAT_SONAR_PROPERTY = {
+    CoverageFormat.LCOV: "sonar.javascript.lcov.reportPaths",
+    CoverageFormat.JACOCO: "sonar.coverage.jacoco.xmlReportPaths",
+}
+
+
+def _sonar_paths_for_specs(
+    specs: list[tuple[Path, CoverageFormat]], args: argparse.Namespace
+) -> dict[str, tuple[str, ...]]:
+    """Sonar coverage properties for reports supplied via `--coverage-file`.
+
+    Without this the escape hatch handed Sonar an empty mapping, so `coverage_file`
+    together with `sonar_url` ran a full analysis that reported **no coverage at all** and
+    said nothing about it. Sonar then shows the project at 0%, which reads as a real
+    measurement rather than as a missing one.
+
+    Cobertura cannot be resolved from the format alone (Python and .NET use different
+    properties), so that case warns and names the way out instead of guessing.
+    """
+    if not getattr(args, "sonar_url", ""):
+        return {}
+    paths: dict[str, tuple[str, ...]] = {}
+    ambiguous = False
+    for path, fmt in specs:
+        prop = _FORMAT_SONAR_PROPERTY.get(fmt)
+        if prop is None:
+            ambiguous = True
+            continue
+        paths[prop] = (*paths.get(prop, ()), str(path))
+    if ambiguous:
+        _warn(
+            "coverage_file supplied Cobertura reports and Sonar's property for them "
+            "depends on the language (sonar.python.coverage.reportPaths vs "
+            "sonar.cs.cobertura.reportsPaths). Name it explicitly with "
+            "`sonar_args: '-Dsonar.python.coverage.reportPaths=...'`, or Sonar will "
+            "record this project as having no coverage."
+        )
+    return paths
+
+
 def _collect_coverage(
     args: argparse.Namespace,
 ) -> tuple[CoverageReport, bool, list[Ecosystem], dict[str, tuple[str, ...]], list[str]] | int:
@@ -458,7 +539,9 @@ def _collect_coverage(
     # Escape hatch: ingest pre-made coverage file(s); never run tests.
     if args.coverage_file:
         try:
-            specs = [_parse_coverage_arg(s) for s in args.coverage_file]
+            specs = _expand_coverage_specs(
+                [_parse_coverage_arg(s) for s in args.coverage_file], args.repo
+            )
             reports = [ingest_file(path, fmt, args.repo) for path, fmt in specs]
         except (ValueError, IngestError) as exc:
             return _fail(str(exc))
@@ -474,7 +557,13 @@ def _collect_coverage(
                 "instrumented the code."
             )
             return EXIT_ERROR
-        return merged, False, [], {}, [str(path) for path, _ in specs]
+        return (
+            merged,
+            False,
+            [],
+            _sonar_paths_for_specs(specs, args),
+            [str(path) for path, _ in specs],
+        )
 
     # Otherwise detect (or honour forced) ecosystems and run their tests.
     if args.ecosystem:

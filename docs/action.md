@@ -35,7 +35,7 @@ code, which is the worse of the two.
 | --- | --- | --- | --- |
 | `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, comma-separated. |
 | `test_command` | string | *(detected)* | Replace the detected test command with a shell command string. |
-| `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. Format is sniffed when you leave it off. |
+| `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. **Globs are expanded**, which is how you name `dotnet test`'s per-project `TestResults/*/coverage.cobertura.xml`. A pattern matching nothing is an error, not an empty result. Format is sniffed when you leave it off. |
 | `test_timeout` | int | `3600` | Kill the test run after N seconds. A timeout is a **broken run** (exit 2), never 0% coverage. `0` waits indefinitely. |
 
 ## PR comment

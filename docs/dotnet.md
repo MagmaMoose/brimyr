@@ -105,8 +105,21 @@ each one's test command, reads Cobertura from one and lcov from the other, and m
 into a single patch-coverage number, no separate merge step, and no ReportGenerator pass,
 required.
 
-If you already produce merged reports another way, feed them in directly and Brimyr will
-not run any tests:
+### Reuse the reports you already have
+
+If your pipeline already runs the tests, point Brimyr at the reports instead of letting it
+run them again. On a large solution that halves the PR's CI time. `dotnet test` writes each
+project's report to a per-run GUID directory, so use a glob:
+
+```yaml
+        with:
+          coverage_file: "**/TestResults/*/coverage.cobertura.xml"
+```
+
+A pattern that matches nothing is an error, not an empty result: contributing no reports
+would pass at a vacuous 100%.
+
+If you already produce merged reports another way, feed those in directly:
 
 ```yaml
         with:

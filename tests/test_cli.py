@@ -705,3 +705,69 @@ def test_lint_scan_broken_does_not_need_a_counts_file_at_all(capsys):
     assert main(["lint", "--scan-broken", "--quiet"]) == 2  # nosec B101
     assert main(["lint", "--quiet"]) == 2  # nosec B101
     assert "--counts is required" in capsys.readouterr().err  # nosec B101
+
+
+# ── --coverage-file globbing ─────────────────────────────────────────────────
+
+
+def _cobertura_at(path, filename, lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(f'<line number="{n}" hits="{h}"/>' for n, h in lines.items())
+    path.write_text(
+        "<coverage><packages><package><classes>"
+        f'<class filename="{filename}"><lines>{body}</lines></class>'
+        "</classes></package></packages></coverage>"
+    )
+
+
+def test_coverage_file_expands_a_glob(repo, tmp_path):
+    """`dotnet test` writes each project's report to `TestResults/<guid>/`.
+
+    The GUIDs are generated per run, so a consumer literally cannot name the files. Without
+    globbing they cannot feed Brimyr the reports their pipeline already produced and must
+    let it re-run the whole suite, which on a large solution doubles PR CI time. An action
+    input is interpolated into YAML, so the shell never expands it for them either.
+    """
+    repo_dir, base = repo
+    _cobertura_at(tmp_path / "TestResults" / "aaa" / "coverage.cobertura.xml", "a.py", {4: 1})
+    _cobertura_at(tmp_path / "TestResults" / "bbb" / "coverage.cobertura.xml", "a.py", {5: 1})
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(tmp_path / "TestResults" / "*" / "coverage.cobertura.xml"),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
+    assert code == 0  # nosec B101 - both reports found and merged: lines 4 and 5 covered
+
+
+def test_a_glob_matching_nothing_is_an_error(repo, tmp_path):
+    """Loud, not empty. Contributing no reports is the vacuous-100% pass."""
+    repo_dir, base = repo
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(tmp_path / "TestResults" / "*" / "coverage.cobertura.xml"),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+        ]
+    )
+    assert code == 2  # nosec B101 - never 0
+
+
+def test_a_literal_path_is_untouched(repo, tmp_path):
+    """No glob metacharacters means no globbing: a plain path still works."""
+    repo_dir, base = repo
+    cov = tmp_path / "coverage.xml"
+    _cobertura_at(cov, "a.py", {4: 1, 5: 1})
+    code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
+    assert code == 0  # nosec B101
