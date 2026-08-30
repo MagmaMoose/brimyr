@@ -40,6 +40,7 @@ from typing import Any
 from urllib.parse import quote
 
 from brimyr import __version__
+from brimyr import http as brimyr_http
 
 #: Must match ``oidc_audience`` on the deployed broker. The audience is the boundary that
 #: stops chargate's runners minting brimyr's identity and vice versa — the two services
@@ -100,7 +101,7 @@ def _get_json(
     request.add_header("User-Agent", _USER_AGENT)
     if data is not None:
         request.add_header("Content-Type", "application/json")
-    active = opener or urllib.request.build_opener()
+    active = opener or brimyr_http.build_opener()
     with active.open(request, timeout=_TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 

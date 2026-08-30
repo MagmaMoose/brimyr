@@ -24,6 +24,10 @@ diff corpus) are in `SUBSYSTEMS.md` — read that when you touch one of those.
   string, so one file rooted two ways (multi-project .NET) counts twice — measured 50%
   where the truth is 100%. Use `compute_total_coverage`: it folds by path-suffix and
   applies `exclude_globs`. Empty denominator ⇒ `None`, never the gate's vacuous 100%.
+- **JaCoCo paths carry no module prefix.** Two modules' `nl/x/Service.java` are the
+  same string, so `merge_reports` folds them covered-wins and the covered module
+  answers for the uncovered one: measured 100% where the truth was 0%.
+  `runner._jacoco_path_resolver` reconstructs `<module>/<src-root>/...` from disk.
 - **Coverage paths rarely equal diff paths.** `patch._match` tries exact, then
   prefix-stripped, then suffix either way — fix matching there, not in the callers.
 - **Sample-size floor.** `min_lines` (default 20, matching SonarQube) skips the threshold

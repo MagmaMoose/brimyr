@@ -51,6 +51,7 @@ for a multi-project .NET solution. **Pure**: parses a string, touches no files.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from io import BytesIO
 from xml.etree import ElementTree as ET  # nosec B405  # nosemgrep
 
@@ -81,8 +82,21 @@ def is_jacoco(text: str) -> bool:
     return False
 
 
-def parse_jacoco(text: str) -> CoverageReport:
-    """Parse JaCoCo XML text into a :class:`CoverageReport`."""
+def parse_jacoco(text: str, *, resolve_path: Callable[[str], str] | None = None) -> CoverageReport:
+    """Parse JaCoCo XML text into a :class:`CoverageReport`.
+
+    ``resolve_path`` maps the source-root-relative path JaCoCo reports
+    (``nl/example/Service.java``) to a repo-relative one. It exists because JaCoCo
+    paths carry **no module prefix**, so in a multi-module reactor two different
+    modules' ``nl/example/Service.java`` are the same string. `merge_reports` keys by
+    string, folds them covered-wins, and a changed line in the uncovered module is
+    then reported as covered: 100% where the truth is 0%. Reproduced before this
+    existed.
+
+    Kept as a callback rather than a path argument because resolving it needs the
+    filesystem, and nothing under ``coverage/`` may do I/O. :mod:`brimyr.runner`
+    supplies it; without one the paths are returned as JaCoCo gave them.
+    """
     try:
         root = ET.fromstring(text)  # nosec B314
     except ET.ParseError as exc:
@@ -98,6 +112,8 @@ def parse_jacoco(text: str) -> CoverageReport:
             if not name:
                 continue
             path = f"{prefix}/{name}" if prefix else name
+            if resolve_path is not None:
+                path = resolve_path(path)
             for line_el in source_el.iter("line"):
                 number = line_el.get("nr")
                 if number is None:

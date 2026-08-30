@@ -184,7 +184,12 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
     Ecosystem(
         key="dotnet",
         label=".NET",
-        markers=("*.sln", "*.csproj", "*.fsproj", "*.vbproj"),
+        # `.slnx` is the XML solution format that became the default in .NET 10, so
+        # `dotnet new sln` now writes `Foo.slnx` and a repo created with current tooling
+        # has NO `.sln` at all. Projects usually live under src/, and _has_marker only
+        # globs the root, so the solution file is often the only marker there is: missing
+        # `.slnx` means a whole modern solution is silently not detected.
+        markers=("*.sln", "*.slnx", "*.csproj", "*.fsproj", "*.vbproj"),
         test_command=(
             "dotnet",
             "test",

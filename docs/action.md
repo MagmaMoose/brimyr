@@ -6,7 +6,7 @@ Every input and output of the `magmamoose/brimyr` composite action, with the def
 code actually uses. Inputs are all optional. For the CLI behind it, see
 [CLI reference](cli.md).
 
-The action has two gates — **patch coverage** (always) and **net-new quality findings**
+The action has two gates, **patch coverage** (always) and **net-new quality findings**
 (opt-in, `quality: 'true'`). They share one job summary, one PR comment, and one exit
 code, which is the worse of the two.
 
@@ -26,7 +26,7 @@ code, which is the worse of the two.
 | `min_lines` | int | `20` | Diffs with fewer changed executable lines than this are not gated at all. Set `0` to gate every diff. See [Patch coverage](patch-coverage.md#the-sample-size-floor). |
 | `base_ref` | string | *(PR base SHA)* | Override the base ref or SHA to diff against. |
 | `head_ref` | string | *(PR head SHA, else `github.sha`)* | Override the head ref or SHA. |
-| `exclude` | string | *(empty)* | Comma-separated globs. Matching changed files leave the denominator entirely, so they are not counted as covered, they just don't count. `*` crosses `/`. |
+| `exclude` | string | *(empty)* | Comma-separated globs, whitespace around the commas is trimmed. Matching changed files leave the denominator entirely, so they are not counted as covered, they just don't count. `*` crosses `/`. |
 | `strip_prefix` | string | *(empty)* | Comma-separated path prefixes to strip from coverage paths before matching them to diff paths. |
 
 ## Test run
@@ -35,7 +35,8 @@ code, which is the worse of the two.
 | --- | --- | --- | --- |
 | `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, comma-separated. |
 | `test_command` | string | *(detected)* | Replace the detected test command with a shell command string. |
-| `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. Format is sniffed when you leave it off. |
+| `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. **Globs are expanded**, which is how you name `dotnet test`'s per-project `TestResults/*/coverage.cobertura.xml`. A pattern matching nothing is an error, not an empty result. Format is sniffed when you leave it off. |
+| `test_timeout` | int | `3600` | Kill the test run after N seconds. A timeout is a **broken run** (exit 2), never 0% coverage. `0` waits indefinitely. |
 
 ## PR comment
 
@@ -72,8 +73,8 @@ Everything here is non-blocking. See [SonarQube](sonarqube.md).
 ## Quality findings
 
 Coverage is half of quality assurance. Set `quality: true` and the action runs
-[Chargate](https://github.com/MagmaMoose/chargate) as a nested step — MegaLinter's
-quality linters → SARIF → net-new classification against this PR's diff — then
+[Chargate](https://github.com/MagmaMoose/chargate) as a nested step, MegaLinter's
+quality linters → SARIF → net-new classification against this PR's diff, then
 decides pass/fail on `quality_fail_on` and folds the verdict into the same job summary
 and the same PR comment as coverage. Chargate reports, Brimyr gates. Needs Docker on
 the runner.
@@ -88,8 +89,8 @@ the runner.
 The threshold speaks SARIF **levels** and not Chargate's severity bands. Chargate gates
 on per-result verdicts, where a missing `security-severity` falls back to the level, so
 its bands work. Brimyr reads only the counts document, whose `per_severity_*` maps are
-populated solely from a real `security-severity` — a property quality linters essentially
-never emit — so a band-valued threshold read off it would match nothing on every PR. It
+populated solely from a real `security-severity`, a property quality linters essentially
+never emit, so a band-valued threshold read off it would match nothing on every PR. It
 defaults to `none` for the same reason a first PR should not go red with hundreds of
 findings: measure a release cycle, then pick a level.
 
@@ -98,7 +99,7 @@ every other action here. It runs with `fail_on: none` and `continue-on-error: tr
 Chargate never sets this job's exit code and a Docker or MegaLinter failure can't take
 the coverage gate down with it. That is not a silent pass: the action branches on that
 step's `outcome`, and on anything other than `success` it passes `--quality-scan-broken`,
-which reads no file at all and reports a scan that did not complete — exit `2`, and
+which reads no file at all and reports a scan that did not complete, exit `2`, and
 `quality_gate_result` `error`.
 
 It goes by the outcome rather than by the file because the file settles nothing.
@@ -107,13 +108,13 @@ runs, so a failed scan can leave a well-formed row of zeros behind, which is pre
 what a clean pull request looks like.
 
 The verdict is folded into the coverage summary and the coverage comment, and the job's
-exit code becomes the worse of the two halves on the `0` < `1` < `2` scale — clean
+exit code becomes the worse of the two halves on the `0` < `1` < `2` scale, clean
 coverage does not launder a blocking quality finding. In `baseline` mode neither half
 gates.
 
 !!! note "An exit-`0` scan is not proof of a complete one"
-    Chargate can decline to start a linter — no image for the runner's architecture, no
-    SARIF output, the linter disabled — and still exit `0`, so anything that linter would
+    Chargate can decline to start a linter, no image for the runner's architecture, no
+    SARIF output, the linter disabled, and still exit `0`, so anything that linter would
     have reported is missing from the count, and missing findings are what a clean repo
     looks like too. The action forwards Chargate's `linters_skipped` output as
     `--quality-scan-note`, and Brimyr states the shortfall next to the count in the
@@ -121,7 +122,7 @@ gates.
     [Quality findings](quality-findings.md#a-scan-that-completed-is-not-necessarily-a-full-one).
 
 !!! note "The pin has to carry the `quality` flavor"
-    `action.yml` pins `magmamoose/chargate@528a42e` (v2.11.27), which does — so
+    `action.yml` pins `magmamoose/chargate@528a42e` (v2.11.27), which does, so
     `quality: 'true'` is usable. v1.9.0 of this action pinned v2.11.25, which predates
     the flavor; on that pin the nested step fails and Brimyr reports a broken scan
     (exit `2`, `quality_gate_result` `error`) rather than a clean quality half. If you
@@ -150,7 +151,7 @@ gates.
 | `total_coverage` | Overall coverage across the files the run measured. **Empty string** when nothing was measured, never `0.00`, so an unmeasured run and a genuinely zero-covered one don't look the same to a downstream `if`. |
 | `quality_gate_result` | `pass`, `fail` or `error` for the quality half. `error` means the scan did not complete, which is the state to notice first: it is a tool error, not zero findings. Empty when `quality` is off. |
 | `quality_net_new_count` | Net-new (PR-introduced) quality findings. Empty when `quality` is off. |
-| `quality_blocking_count` | Net-new quality findings at or above `quality_fail_on` — the ones that actually block. |
+| `quality_blocking_count` | Net-new quality findings at or above `quality_fail_on` : the ones that actually block. |
 | `quality_fail_on` | The threshold that was in force. It ships alongside the verdict because at `none` a report-only run and a genuinely clean one both say `pass`, and they are not the same thing. Empty when `quality` is off. |
 
 ## Permissions

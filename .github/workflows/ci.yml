@@ -25,6 +25,19 @@ jobs:
         run: uv run ruff format --check .
       - name: Pytest
         run: uv run pytest -q
+      # `docs.yml` delegates to Tremvok's shared workflow, which builds the site but does
+      # not police prose. Nothing did, so em-dashes crept back into eight pages between
+      # one docs sync and the next. Six lines, no dependency, and it fails on the pull
+      # request that introduces them rather than at the next manual audit. If Tremvok
+      # ever grows this check, delete it here.
+      - name: Docs voice (no em-dashes in published prose)
+        run: |
+          set -euo pipefail
+          if grep -rn '[—–]' docs/ ; then
+            echo "::error::em-dash or en-dash in docs/. Use a comma, a colon, parentheses, or two sentences."
+            exit 1
+          fi
+          echo "docs/ is free of em-dashes"
 
   # broker/ is a SEPARATE project — its own pyproject, lock, ruff config and
   # target-version py312 (the Lambda runtime). The root job above cannot cover it: root

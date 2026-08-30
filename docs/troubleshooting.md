@@ -40,6 +40,35 @@ happening:
 - **`exclude` is too broad.** A glob like `*Migrations*` uses `fnmatch`, where `*` crosses
   `/`, so it matches deeper than you might expect.
 
+## `the coverage report(s) named no files at all`
+
+The report parsed but describes nothing, so there is no coverage to gate on. That's a
+broken report, not 0%, and it exits `2`.
+
+The usual causes:
+
+- **JVM:** a surefire `<argLine>` that overrides instead of appending `@{argLine}`, which
+  detaches the JaCoCo agent while the build stays green.
+- **.NET:** `dotnet test` ran without `--collect:"XPlat Code Coverage"`, or the
+  `coverlet.collector` package isn't referenced by the test project.
+- **Any:** `coverage_file` points at a report from a different run, or at a file the
+  coverage tool wrote before it instrumented anything.
+
+## `tests did not finish within Ns and were killed`
+
+The suite hit `test_timeout` (default 3600 seconds) and was killed. This is a broken run,
+exit `2`, not 0% coverage.
+
+Raise it if the suite is genuinely that slow:
+
+```yaml
+        with:
+          test_timeout: '7200'
+```
+
+Set `'0'` to wait indefinitely, which restores the old behaviour: a hung suite then holds
+the runner until the job timeout, six hours by default on GitHub-hosted runners.
+
 ## `History is shallow, so the merge-base is unavailable.`
 
 `actions/checkout` defaults to `fetch-depth: 1`, and patch coverage needs the merge base.

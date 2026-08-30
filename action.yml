@@ -130,6 +130,15 @@ inputs:
     default: '8.1.0.6389'
 
   # ── Output ───────────────────────────────────────────────────────────────
+  test_timeout:
+    description: >-
+      Kill the test run after N seconds (default 3600). A suite that has not finished in
+      an hour is hung, and without a limit it holds the runner until the job timeout,
+      which on GitHub-hosted runners is six hours. A timeout is a BROKEN run (exit 2),
+      never 0% coverage. Set to '0' to wait indefinitely.
+    required: false
+    default: '3600'
+
   html_report:
     description: >-
       Render the coverage reports to a browsable HTML report and upload it as a build
@@ -296,6 +305,7 @@ runs:
       shell: bash
       env:
         SCANNER_VERSION: ${{ inputs.sonar_scanner_version }}
+        ECOSYSTEM_IN: ${{ inputs.ecosystem }}
       run: |
         set -euo pipefail
 
@@ -310,12 +320,25 @@ runs:
             echo "::error::sonar_scanner_version must be digits and dots only"
             exit 1 ;;
         esac
-        # C#/VB.NET cannot be analyzed by the CLI scanner at all — Sonar documents this —
-        # so a .NET repo needs the MSBuild-integrated scanner instead. Pick by what is in
-        # the tree, not by an input, so a consumer cannot get it wrong.
-        if command -v dotnet >/dev/null 2>&1 \
-           && find . -maxdepth 4 \( -name '*.sln' -o -name '*.csproj' -o -name '*.vbproj' \) \
-                -not -path './.git/*' -print -quit | grep -q .; then
+        # C#/VB.NET cannot be analyzed by the CLI scanner at all (Sonar documents this),
+        # so a .NET repo needs the MSBuild-integrated scanner instead.
+        #
+        # This test MUST agree with `detect.py`'s .NET markers, because brimyr picks the
+        # strategy and this step picks the binary. When they disagree the job installs one
+        # scanner and then runs the other, which surfaces as `skipped (not found on PATH)`
+        # on a green build with no analysis uploaded. Two ways they used to disagree:
+        # the extension list was missing `*.slnx` and `*.fsproj`, and this searched four
+        # levels deep while `_has_marker` globs the repo root only. Both are matched here,
+        # and `ecosystem: dotnet` is honoured because forcing it is exactly what a consumer
+        # does when root detection does not fire.
+        is_dotnet=false
+        case ",$ECOSYSTEM_IN," in *,dotnet,*) is_dotnet=true ;; esac
+        if [ "$is_dotnet" = false ] && find . -maxdepth 1 \
+             \( -name '*.sln' -o -name '*.slnx' -o -name '*.csproj' \
+                -o -name '*.fsproj' -o -name '*.vbproj' \) -print -quit | grep -q .; then
+          is_dotnet=true
+        fi
+        if command -v dotnet >/dev/null 2>&1 && [ "$is_dotnet" = true ]; then
           # Already-installed is not an error: `dotnet tool install` exits non-zero when
           # the tool is present, which is the normal case on a self-hosted or cached
           # runner. Fall through to update, then to "it is already there".
@@ -445,6 +468,7 @@ runs:
         MODE_IN: ${{ inputs.mode }}
         THRESHOLD_IN: ${{ inputs.threshold }}
         MIN_LINES_IN: ${{ inputs.min_lines }}
+        TEST_TIMEOUT_IN: ${{ inputs.test_timeout }}
         STRIP_PREFIX_IN: ${{ inputs.strip_prefix }}
         EXCLUDE_IN: ${{ inputs.exclude }}
         ECOSYSTEM_IN: ${{ inputs.ecosystem }}
@@ -493,6 +517,7 @@ runs:
           --mode "$MODE_IN"
           --threshold "$THRESHOLD_IN"
           --min-lines "$MIN_LINES_IN"
+          --test-timeout "$TEST_TIMEOUT_IN"
           --repo "."
           --head "$head"
           --json-out "$json_abs")
@@ -500,14 +525,20 @@ runs:
         [ -n "$base" ] && args+=(--base "$base")
         [ -n "$TEST_COMMAND_IN" ] && args+=(--test-command "$TEST_COMMAND_IN")
 
+        # Every comma-separated input below is trimmed. `exclude: "*Migrations*, *.Designer.cs"`
+        # is the natural way to write a list in YAML, and untrimmed it yields the glob
+        # " *.Designer.cs" with a leading space, which matches nothing. The generated files
+        # stay in the denominator and the PR fails for a reason nobody can see.
+        trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+
         IFS=',' read -ra _eco <<< "$ECOSYSTEM_IN"
-        for e in "${_eco[@]}"; do [ -n "$e" ] && args+=(--ecosystem "$e"); done
+        for e in "${_eco[@]}"; do e="$(trim "$e")"; [ -n "$e" ] && args+=(--ecosystem "$e"); done
         IFS=',' read -ra _cov <<< "$COVERAGE_FILE_IN"
-        for c in "${_cov[@]}"; do [ -n "$c" ] && args+=(--coverage-file "$c"); done
+        for c in "${_cov[@]}"; do c="$(trim "$c")"; [ -n "$c" ] && args+=(--coverage-file "$c"); done
         IFS=',' read -ra _sp <<< "$STRIP_PREFIX_IN"
-        for p in "${_sp[@]}"; do [ -n "$p" ] && args+=(--strip-prefix "$p"); done
+        for p in "${_sp[@]}"; do p="$(trim "$p")"; [ -n "$p" ] && args+=(--strip-prefix "$p"); done
         IFS=',' read -ra _ex <<< "$EXCLUDE_IN"
-        for e in "${_ex[@]}"; do [ -n "$e" ] && args+=(--exclude "$e"); done
+        for e in "${_ex[@]}"; do e="$(trim "$e")"; [ -n "$e" ] && args+=(--exclude "$e"); done
 
         if [ -n "$SONAR_URL_IN" ]; then
           args+=(--sonar-url "$SONAR_URL_IN")
@@ -515,7 +546,7 @@ runs:
           [ -n "$SONAR_ORG_IN" ] && args+=(--sonar-organization "$SONAR_ORG_IN")
           [ -n "$SONAR_SOURCES_IN" ] && args+=(--sonar-sources "$SONAR_SOURCES_IN")
           IFS=',' read -ra _sa <<< "$SONAR_ARGS_IN"
-          for a in "${_sa[@]}"; do [ -n "$a" ] && args+=(--sonar-arg "$a"); done
+          for a in "${_sa[@]}"; do a="$(trim "$a")"; [ -n "$a" ] && args+=(--sonar-arg "$a"); done
         fi
 
         # Deliberately NOT guarded on the file existing. If the Chargate step failed

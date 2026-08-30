@@ -19,6 +19,13 @@ Read the section for the area you are touching. Always-applicable rules live in
 - Never pass `sonar.branch.name` / `sonar.pullrequest.*` to a Community Build server —
   that is a hard scanner error, not a no-op.
 
+- `coverage_file` supplies Sonar's coverage paths by FORMAT (`_sonar_paths_for_specs`).
+  Cobertura is deliberately not guessed: Python and .NET use different properties, and
+  the wrong one is silently ignored by Sonar. It warns and names `sonar_args` instead.
+- The `action.yml` scanner-install test MUST match `detect.py`'s .NET markers exactly,
+  extensions and depth. When they disagree the job installs one scanner and runs the
+  other: `skipped (not found on PATH)` on a green build.
+
 ## `broker/` — a separate project
 
 - Its own deps, ruff config (`py312`) and CI job. Root ruff **excludes** it and root

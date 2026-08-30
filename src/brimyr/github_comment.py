@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from brimyr import __version__
+from brimyr import http as brimyr_http
 
 # A hidden HTML marker: invisible in rendered Markdown, but it lets a later run
 # recognise the comment it owns. Deliberately namespaced to brimyr.
@@ -93,7 +94,7 @@ class _GitHubAPI:
         opener: urllib.request.OpenerDirector | None = None,
     ) -> None:
         self._config = config
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or brimyr_http.build_opener()
 
     def request(self, method: str, url: str, payload: Any | None = None) -> Any:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None

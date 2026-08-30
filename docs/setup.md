@@ -129,7 +129,7 @@ net-new findings into the same summary and the same comment as coverage:
 
 It needs **Docker** on the runner. `quality_fail_on` defaults to `none`, so the half
 ships **report-only**: findings are counted and shown, nothing blocks. Measure a release
-cycle before picking a level — the failure mode here is abandonment, not error.
+cycle before picking a level: the failure mode here is abandonment, not error.
 
 The threshold speaks SARIF levels (`note`, `warning`, `error`, `any`), not Chargate's
 severity bands. Full detail, and why, in [Quality findings](quality-findings.md).
@@ -158,8 +158,8 @@ are unaffected until you opt in with `--group docs`.
 ## PR comment
 
 Brimyr can post **one** consolidated comment on the pull request. It carries the
-coverage verdict — the percentage, the threshold, and the changed lines the tests never
-executed — and, when the quality half is on, the net-new findings beneath it, under a
+coverage verdict: the percentage, the threshold, and the changed lines the tests never
+executed, and, when the quality half is on, the net-new findings beneath it, under a
 second heading in the same comment. It is updated in place on every push rather than
 stacked, so a long-running PR keeps exactly one comment.
 

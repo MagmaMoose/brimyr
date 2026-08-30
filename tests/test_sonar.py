@@ -136,3 +136,58 @@ class TestDotnetStrategy:
 
         cli = [e.key for e in ECOSYSTEMS if e.sonar_strategy is SonarStrategy.CLI]
         assert set(cli) == {"python", "javascript", "java"}  # nosec B101
+
+
+class TestEscapeHatchFeedsSonar:
+    """`coverage_file` used to hand Sonar an empty mapping.
+
+    A full analysis then ran and reported NO coverage at all, silently. Sonar shows the
+    project at 0%, which reads as a real measurement rather than a missing one.
+    """
+
+    def _args(self, url="https://sonar.example"):
+        import argparse
+
+        return argparse.Namespace(sonar_url=url)
+
+    def test_jacoco_and_lcov_resolve_from_the_format(self):
+        from pathlib import Path
+
+        from brimyr.cli import _sonar_paths_for_specs
+        from brimyr.detect import CoverageFormat
+
+        specs = [
+            (Path("m/target/site/jacoco/jacoco.xml"), CoverageFormat.JACOCO),
+            (Path("coverage/lcov.info"), CoverageFormat.LCOV),
+        ]
+        out = _sonar_paths_for_specs(specs, self._args())
+        assert out["sonar.coverage.jacoco.xmlReportPaths"] == (  # nosec B101
+            "m/target/site/jacoco/jacoco.xml",
+        )
+        assert out["sonar.javascript.lcov.reportPaths"] == ("coverage/lcov.info",)  # nosec B101
+
+    def test_cobertura_is_not_guessed(self, capsys):
+        """Python and .NET both emit Cobertura under different properties.
+
+        Guessing would ship the coverage under a property Sonar ignores, which looks
+        exactly like success. Warn and name the way out instead.
+        """
+        from pathlib import Path
+
+        from brimyr.cli import _sonar_paths_for_specs
+        from brimyr.detect import CoverageFormat
+
+        out = _sonar_paths_for_specs(
+            [(Path("coverage.xml"), CoverageFormat.COBERTURA)], self._args()
+        )
+        assert out == {}  # nosec B101
+        assert "sonar_args" in capsys.readouterr().err  # nosec B101 - names the fix
+
+    def test_nothing_happens_without_a_sonar_url(self):
+        from pathlib import Path
+
+        from brimyr.cli import _sonar_paths_for_specs
+        from brimyr.detect import CoverageFormat
+
+        specs = [(Path("a/jacoco.xml"), CoverageFormat.JACOCO)]
+        assert _sonar_paths_for_specs(specs, self._args(url="")) == {}  # nosec B101

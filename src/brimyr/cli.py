@@ -27,6 +27,7 @@ both halves exits with the worse of the two.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -71,7 +72,14 @@ from brimyr.quality import (
     parse_counts,
     read_finding_lines,
 )
-from brimyr.runner import IngestError, RunResult, ingest_file, run_command, run_tests
+from brimyr.runner import (
+    DEFAULT_TEST_TIMEOUT,
+    IngestError,
+    RunResult,
+    ingest_file,
+    run_command,
+    run_tests,
+)
 
 _EXT_FORMAT = {
     ".info": CoverageFormat.LCOV,
@@ -379,19 +387,62 @@ def cmd_lint(args: argparse.Namespace) -> int:
 # ── coverage: the pure patch-coverage computation ────────────────────────────
 
 
+def _expand_coverage_specs(
+    specs: list[tuple[Path, CoverageFormat]], repo: str | Path = "."
+) -> list[tuple[Path, CoverageFormat]]:
+    """Expand any glob in a `--coverage-file` path.
+
+    `dotnet test` writes each test project's report to `TestResults/<random-guid>/
+    coverage.cobertura.xml`, so the paths are not knowable ahead of time. Without glob
+    support a consumer cannot name them, which means they cannot feed Brimyr the reports
+    their pipeline ALREADY produced and must let it re-run the whole suite instead: on a
+    1200-file solution that doubles the PR's CI time. An action input is interpolated
+    into YAML, so the shell never expands it for them either.
+
+    A glob matching nothing is an ERROR, not an empty list. Silently contributing no
+    reports is the vacuous-100% failure this tool exists to prevent.
+    """
+    out: list[tuple[Path, CoverageFormat]] = []
+    for path, fmt in specs:
+        text = str(path)
+        if not any(ch in text for ch in "*?["):
+            out.append((path, fmt))
+            continue
+        if path.is_absolute():
+            matches = sorted(Path(p) for p in glob.glob(text, recursive=True))
+        else:
+            matches = sorted(Path(repo).glob(text))
+        if not matches:
+            raise ValueError(
+                f"coverage-file pattern {text!r} matched no files. That would silently "
+                "contribute no coverage and pass, so it is an error."
+            )
+        out.extend((m, fmt) for m in matches)
+    return out
+
+
 def cmd_coverage(args: argparse.Namespace) -> int:
     try:
-        specs = [_parse_coverage_arg(s) for s in args.coverage_file]
+        specs = _expand_coverage_specs(
+            [_parse_coverage_arg(s) for s in args.coverage_file], args.repo
+        )
     except ValueError as exc:
         return _fail(str(exc))
 
     reports: list[CoverageReport] = []
     for path, fmt in specs:
         try:
-            reports.append(ingest_file(path, fmt))
+            reports.append(ingest_file(path, fmt, args.repo))
         except IngestError as exc:
             return _fail(str(exc))
     report = merge_reports(reports)
+    # Same rule as the run-the-tests path: a report naming zero files is a broken
+    # report, not 0% and not a vacuous pass.
+    if not report:
+        return _fail(
+            "the coverage report(s) named no files at all. That is a broken report, "
+            "not 0% coverage — check the coverage tool actually instrumented the code."
+        )
 
     try:
         diff = bgit.compute_changed_lines(
@@ -410,6 +461,14 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     except ValueError as exc:
         return _fail(str(exc))
 
+    # `--html-report` is offered by `_add_shared_diff_args`, so it reaches this
+    # subcommand too. Rendering it here is what stops the flag being a silent no-op:
+    # accepting an option and then ignoring it is the same class of failure as a
+    # coverage number that quietly means nothing.
+    html_message = _maybe_render_html(args, [str(path) for path, _ in specs])
+    if html_message and not args.quiet:
+        _eprint(f"brimyr: html report: {html_message}")
+
     if args.json_out:
         Path(args.json_out).write_text(
             json.dumps(counts_to_dict(decision), indent=2), encoding="utf-8"
@@ -421,6 +480,50 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 
 # ── ci / local: the full flow ────────────────────────────────────────────────
+
+
+#: Sonar's coverage property per report format, where the format determines it. Cobertura
+#: is deliberately absent: Python and .NET both emit it and they use different properties,
+#: so guessing would ship the coverage under a property Sonar ignores, which looks exactly
+#: like success.
+_FORMAT_SONAR_PROPERTY = {
+    CoverageFormat.LCOV: "sonar.javascript.lcov.reportPaths",
+    CoverageFormat.JACOCO: "sonar.coverage.jacoco.xmlReportPaths",
+}
+
+
+def _sonar_paths_for_specs(
+    specs: list[tuple[Path, CoverageFormat]], args: argparse.Namespace
+) -> dict[str, tuple[str, ...]]:
+    """Sonar coverage properties for reports supplied via `--coverage-file`.
+
+    Without this the escape hatch handed Sonar an empty mapping, so `coverage_file`
+    together with `sonar_url` ran a full analysis that reported **no coverage at all** and
+    said nothing about it. Sonar then shows the project at 0%, which reads as a real
+    measurement rather than as a missing one.
+
+    Cobertura cannot be resolved from the format alone (Python and .NET use different
+    properties), so that case warns and names the way out instead of guessing.
+    """
+    if not getattr(args, "sonar_url", ""):
+        return {}
+    paths: dict[str, tuple[str, ...]] = {}
+    ambiguous = False
+    for path, fmt in specs:
+        prop = _FORMAT_SONAR_PROPERTY.get(fmt)
+        if prop is None:
+            ambiguous = True
+            continue
+        paths[prop] = (*paths.get(prop, ()), str(path))
+    if ambiguous:
+        _warn(
+            "coverage_file supplied Cobertura reports and Sonar's property for them "
+            "depends on the language (sonar.python.coverage.reportPaths vs "
+            "sonar.cs.cobertura.reportsPaths). Name it explicitly with "
+            "`sonar_args: '-Dsonar.python.coverage.reportPaths=...'`, or Sonar will "
+            "record this project as having no coverage."
+        )
+    return paths
 
 
 def _collect_coverage(
@@ -436,11 +539,31 @@ def _collect_coverage(
     # Escape hatch: ingest pre-made coverage file(s); never run tests.
     if args.coverage_file:
         try:
-            specs = [_parse_coverage_arg(s) for s in args.coverage_file]
-            reports = [ingest_file(path, fmt) for path, fmt in specs]
+            specs = _expand_coverage_specs(
+                [_parse_coverage_arg(s) for s in args.coverage_file], args.repo
+            )
+            reports = [ingest_file(path, fmt, args.repo) for path, fmt in specs]
         except (ValueError, IngestError) as exc:
             return _fail(str(exc))
-        return merge_reports(reports), False, [], {}, [str(path) for path, _ in specs]
+        merged = merge_reports(reports)
+        # An entirely empty report is a tool error, not 0% and not a vacuous pass. The
+        # run-the-tests path decides this via RunOutcome.ok; the escape hatch has to
+        # decide it here, or `coverage_file` pointed at a report that instrumented
+        # nothing sails through as 100%.
+        if not merged:
+            _eprint(
+                "brimyr: error: the coverage report(s) named no files at all. That is a "
+                "broken report, not 0% coverage — check the coverage tool actually "
+                "instrumented the code."
+            )
+            return EXIT_ERROR
+        return (
+            merged,
+            False,
+            [],
+            _sonar_paths_for_specs(specs, args),
+            [str(path) for path, _ in specs],
+        )
 
     # Otherwise detect (or honour forced) ecosystems and run their tests.
     if args.ecosystem:
@@ -459,7 +582,12 @@ def _collect_coverage(
             "--coverage-file to ingest a pre-made report."
         )
 
-    result: RunResult = run_tests(ecosystems, args.repo, command=args.test_command or None)
+    result: RunResult = run_tests(
+        ecosystems,
+        args.repo,
+        command=args.test_command or None,
+        timeout=getattr(args, "test_timeout", DEFAULT_TEST_TIMEOUT),
+    )
     sonar_paths: dict[str, tuple[str, ...]] = {}
     coverage_paths: list[str] = []
     for outcome in result.outcomes:
@@ -651,6 +779,20 @@ def _pr_number_from_event() -> int:
     return number if isinstance(number, int) else 0
 
 
+def _resolved_ecosystems(args: argparse.Namespace) -> list[Ecosystem]:
+    """The ecosystems this run is operating on, honouring `--ecosystem`.
+
+    `_wants_dotnet_scanner` already respected the override, but the wrap's build command
+    and coverage globs called `detect_ecosystems` directly. On a repo where detection
+    does not fire (projects in subdirectories, no solution file at the root) the wrap
+    would start, run no build, pass no coverage glob, and `end` would upload an empty
+    analysis from a green job.
+    """
+    if args.ecosystem:
+        return [e for e in (ecosystem(k) for k in args.ecosystem) if e]
+    return detect_ecosystems(args.repo)
+
+
 def _wants_dotnet_scanner(args: argparse.Namespace) -> bool:
     """True when this run should wrap itself in `dotnet sonarscanner begin/end`.
 
@@ -660,9 +802,7 @@ def _wants_dotnet_scanner(args: argparse.Namespace) -> bool:
     """
     if not args.sonar_url or args.coverage_file:
         return False
-    forced = [ecosystem(k) for k in (args.ecosystem or [])]
-    detected = [e for e in forced if e] if args.ecosystem else detect_ecosystems(args.repo)
-    return any(e.sonar_strategy is SonarStrategy.DOTNET for e in detected)
+    return any(e.sonar_strategy is SonarStrategy.DOTNET for e in _resolved_ecosystems(args))
 
 
 def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
@@ -677,7 +817,7 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
 def _run_flow_wrapped(args: argparse.Namespace, mode: Mode) -> int:
     globs = {
         eco.sonar_property: eco.sonar_report_globs
-        for eco in detect_ecosystems(args.repo)
+        for eco in _resolved_ecosystems(args)
         if eco.sonar_property and eco.sonar_report_globs
     }
     with sonar_dotnet.session(_sonar_config(args), args.repo, report_globs=globs) as outcome:
@@ -699,7 +839,7 @@ def _run_flow_wrapped(args: argparse.Namespace, mode: Mode) -> int:
 
 def _run_sonar_build(args: argparse.Namespace) -> None:
     """Run each detected ecosystem's `sonar_build_command`. Never fails the gate."""
-    for eco in detect_ecosystems(args.repo):
+    for eco in _resolved_ecosystems(args):
         if not eco.sonar_build_command:
             continue
         outcome = run_command(eco.sonar_build_command, args.repo)
@@ -851,6 +991,16 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
             "Do not gate a diff with fewer than N changed executable lines — the "
             f"percentage is too coarse to mean anything (default: {DEFAULT_MIN_LINES}, "
             "matching SonarQube). 0 gates every diff."
+        ),
+    )
+    parser.add_argument(
+        "--test-timeout",
+        type=float,
+        default=DEFAULT_TEST_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            f"Kill the test run after N seconds (default: {DEFAULT_TEST_TIMEOUT}). A "
+            "timeout is a broken run (exit 2), never 0% coverage. 0 waits forever."
         ),
     )
     parser.add_argument(

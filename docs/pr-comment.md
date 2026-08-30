@@ -4,7 +4,7 @@
 
 Brimyr can post its verdict as a comment on the pull request, so a reviewer sees the
 numbers without opening the job log. It is **opt-in** (`pr_comment: 'true'`), there is
-exactly **one comment per marker** — and the action's path uses one — and it is
+exactly **one comment per marker**: and the action's path uses one, and it is
 **never** able to change the gate verdict.
 
 The comment body is the same Markdown Brimyr writes to the GitHub job summary: one
@@ -12,7 +12,7 @@ renderer, so the two can never disagree about the run they are describing.
 
 ## One comment, two blocks
 
-On the normal PR path — the composite action, which runs `brimyr ci` — the single
+On the normal PR path: the composite action, which runs `brimyr ci` : the single
 comment carries **both halves of the run**, each under its own heading:
 
 | Heading | What it reports | Rendered by |
@@ -46,13 +46,13 @@ never executed: the only three things you need to know what to write a test for:
 
 ❌ **Patch coverage 72.0% is below the 80.0% threshold.** Uncovered changed lines:
 
-- `src/app/billing.py` — 41, 42, 43, 57
-- `src/app/invoices.py` — 12, 13
+- `src/app/billing.py`, 41, 42, 43, 57
+- `src/app/invoices.py`, 12, 13
 ```
 
 A passing gate collapses to a single line under the same table (`✅ Patch coverage
 92.3% meets the 80.0% threshold.`), and a PR that changed nothing coverable says so
-(`✅ No changed executable lines to cover — vacuous pass.`).
+(`✅ No changed executable lines to cover, vacuous pass.`).
 
 A **broken test run** replaces the table entirely with a blockquote saying the tests
 failed or produced no coverage and that this is a tool error, **not** 0% patch
@@ -78,21 +78,21 @@ line.
 | Pre-existing (never blocking) | 214 |
 | Net-new by level | error=2, note=3, warning=11 |
 
-📋 Report-only — `quality_fail_on` is `none`, so findings are counted and shown but
+📋 Report-only, `quality_fail_on` is `none`, so findings are counted and shown but
 nothing blocks.
 ```
 
 `Gate:` is `pass`, `fail`, `report-only` or `error`, and `Blocks on:` always names the
 threshold that was in force. Under the default `quality_fail_on: none` the run cannot
-block, so `Gate:` reads `report-only` no matter how few findings there are — a clean PR
+block, so `Gate:` reads `report-only` no matter how few findings there are, a clean PR
 and a loaded one are told apart by the count, never by the word. (The
 `quality_gate_result` action **output** has no `report-only` value and prints `pass` for
 both, which is why `quality_fail_on` is echoed as an output of its own.) A
 `Blocking at <level>` row joins the table once the threshold can actually fire, and a
 `Suppressed in source (never blocking)` row appears when there are any.
 
-The closing line names the verdict. A run that cannot block — the default threshold, or
-baseline mode whatever the threshold — gets the `📋 Report-only —` line above instead.
+The closing line names the verdict. A run that cannot block: the default threshold, or
+baseline mode whatever the threshold, gets the `📋 Report-only,` line above instead.
 Once the threshold can fire it is one of:
 
 ```text
@@ -102,7 +102,7 @@ Once the threshold can fire it is one of:
 ```
 
 Findings themselves are listed in a collapsed `<details>` block as `path:line [rule]`,
-capped at 20 with a `… and N more` tail. Summary only — there are no per-finding inline
+capped at 20 with a `… and N more` tail. Summary only, there are no per-finding inline
 review comments, deliberately: Chargate posts those because security findings are
 sparse, and a first PR carrying two hundred inline comments is how a gate gets switched
 off.
@@ -111,7 +111,7 @@ off.
     When the quality scan did not complete, the table is replaced wholesale, exactly as
     a broken test run replaces the coverage table:
 
-    > ❌ **The quality scan did not complete** — Chargate errored or produced no
+    > ❌ **The quality scan did not complete**: Chargate errored or produced no
     > report. This is a tool error (build red), **not** zero net-new findings.
 
     A run that scanned nothing and a repository with nothing to find produce the same
@@ -128,7 +128,7 @@ marker**:
 
 | Marker | Owned by | Carries |
 | --- | --- | --- |
-| `<!-- brimyr:pr-summary -->` | `brimyr ci` — the composite action, i.e. the normal PR path | the consolidated comment: coverage, plus net-new findings when that half ran |
+| `<!-- brimyr:pr-summary -->` | `brimyr ci` : the composite action, i.e. the normal PR path | the consolidated comment: coverage, plus net-new findings when that half ran |
 | `<!-- brimyr:quality-summary -->` | a standalone `brimyr lint` run | net-new findings only |
 
 Invisible in rendered Markdown, but it is how a later run finds the comment it
@@ -139,7 +139,7 @@ archaeology problem.
 
 !!! warning "Two markers, because the halves can run separately"
     `brimyr lint` gets its own marker rather than a second body under the first because
-    the two subcommands can run in either order, or only one of them — a shared marker
+    the two subcommands can run in either order, or only one of them, a shared marker
     would mean whichever ran last silently erased the other's verdict. Two comments is
     the cost of running the halves as separate steps; passing the same two Chargate
     files to `brimyr ci` is how you get one.
@@ -187,9 +187,9 @@ prints a line like
 brimyr: PR comment updated as Brimyr[bot]
 ```
 
-on stderr (suppressed by `--quiet`) and the exit code is whatever the gate — or, when
-both halves ran, the worse of the two — decided. This is the same contract the [SonarQube
-step](setup.md#sonarqube)
+on stderr (suppressed by `--quiet`) and the exit code is whatever the gate, or, when both
+halves ran, the worse of the two, decided. This is the same contract the
+[SonarQube step](setup.md#sonarqube)
 follows: a comment is a convenience, and a convenience must never be able to turn a
 green PR red.
 
@@ -249,7 +249,7 @@ even truncated.
     exactly as useless as no smoke test.
 
 When the mint fails, the reason is appended to that same stderr line: the byline
-is the symptom, this is the diagnosis:
+is the symptom; this is the diagnosis:
 
 | Log message | What to fix |
 | --- | --- |
