@@ -188,7 +188,8 @@ brimyr: PR comment updated as Brimyr[bot]
 ```
 
 on stderr (suppressed by `--quiet`) and the exit code is whatever the gate — or, when
-both halves ran, the worse of the two — decided. This is the same contract the [SonarQube step](setup.md#sonarqube)
+both halves ran, the worse of the two — decided. This is the same contract the [SonarQube
+step](setup.md#sonarqube)
 follows: a comment is a convenience, and a convenience must never be able to turn a
 green PR red.
 
@@ -234,7 +235,8 @@ never printed, logged, written to a step output, or put in the job summary, not
 even truncated.
 
 !!! danger "It fails soft, and it fails silently"
-    Every failure path, no OIDC token, broker down, App not installed, DNS gone, falls back to `GITHUB_TOKEN`. The comment still posts, the gate verdict is
+    Every failure path, no OIDC token, broker down, App not installed, DNS gone, falls back to
+`GITHUB_TOKEN`. The comment still posts, the gate verdict is
     untouched, and **the only symptom is the byline reverting to
     `github-actions[bot]`**. Nothing turns red. Nobody reads a byline.
 
@@ -276,7 +278,8 @@ this page still works, only the byline differs.
 
 If you do want to stand one up, its documentation lives with the code:
 
-- **[`broker/README.md`](https://github.com/MagmaMoose/brimyr/blob/main/broker/README.md)**: architecture, the LocalStack loop (`make -C broker all`), what a local run can and
+- **[`broker/README.md`](https://github.com/MagmaMoose/brimyr/blob/main/broker/README.md)**:
+architecture, the LocalStack loop (`make -C broker all`), what a local run can and
   cannot prove, and the full go-live runbook: seeding the App private key into SSM
   by hand, installing the App, applying the Terraform, and the post-apply checks.
 

@@ -1,6 +1,8 @@
 # Troubleshooting
 
-<!-- sources: src/brimyr/git.py, src/brimyr/cli.py, src/brimyr/runner.py, src/brimyr/sonar.py, src/brimyr/html_report.py -->
+<!-- sources: src/brimyr/git.py, src/brimyr/cli.py, src/brimyr/runner.py, src/brimyr/sonar.py,
+     src/brimyr/html_report.py
+     -->
 
 Symptom, cause, fix. Exit codes first, because they tell you which half of the page you're
 in.
