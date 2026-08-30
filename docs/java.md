@@ -76,7 +76,8 @@ Aggregating into a single report first (the `report-aggregate` goal) also works,
 
 ## Source paths
 
-JaCoCo names files as `<package>/<sourcefile>`, `nl/example/isam/case/CaseService.java`, which is **source-root-relative** and so is missing the `backend/src/main/java/` prefix that
+JaCoCo names files as `<package>/<sourcefile>`, `nl/example/isam/case/CaseService.java`, which
+is **source-root-relative** and so is missing the `backend/src/main/java/` prefix that
 `git diff` reports. Brimyr reconciles that by suffix matching; there is nothing to
 configure.
 
@@ -100,7 +101,8 @@ Gradle's `jacocoTestReport` task writes HTML by default; make sure XML is on
 ## Excluding generated code
 
 The JVM equivalent of the `.NET` problem: generated sources, MapStruct/Lombok output, JAXB
-and OpenAPI stubs. `exclude` drops matching **changed files** from the denominator entirely. They are not counted as covered, they simply do not count:
+and OpenAPI stubs. `exclude` drops matching **changed files** from the denominator entirely.
+They are not counted as covered, they simply do not count:
 
 ```yaml
         with:

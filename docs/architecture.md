@@ -1,6 +1,8 @@
 # Architecture
 
-<!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/quality.py, src/brimyr/runner.py, broker/app/broker.py -->
+<!-- sources: src/brimyr/cli.py, src/brimyr/coverage/patch.py, src/brimyr/quality.py,
+     src/brimyr/runner.py, broker/app/broker.py
+     -->
 
 Brimyr is one `brimyr` Python CLI (`src/brimyr/cli.py:main`) behind three GitHub
 surfaces, running two gates: **patch coverage** and **net-new quality findings**. The
