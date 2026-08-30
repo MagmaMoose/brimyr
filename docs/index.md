@@ -150,14 +150,14 @@ and changed* lines to a bar, leave the back-catalogue alone.
 
 ## Rollout cost is the point
 
-The comparison that matters is not "which tool computes coverage" — it is what it takes
+The comparison that matters is not "which tool computes coverage", it is what it takes
 to switch this on across an estate. For eight repos in four languages:
 
 | | SonarQube | Brimyr |
 | --- | --- | --- |
 | Server to host / licence | a server, or a per-committer plan | none |
 | Per repo | a project, a token, a quality gate, workflow YAML | one `uses:` line |
-| Per ecosystem | a *different scanner* — `dotnet sonarscanner` for .NET, `mvn sonar:sonar` for Java, the CLI for the rest | detected |
+| Per ecosystem | a *different scanner*, `dotnet sonarscanner` for .NET, `mvn sonar:sonar` for Java, the CLI for the rest | detected |
 | Producing the coverage report | yours to work out, per language | it runs your tests |
 | Per-PR diff coverage | Developer Edition and above | included |
 
