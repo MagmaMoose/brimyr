@@ -49,11 +49,11 @@ def _default_runner(
 ) -> subprocess.CompletedProcess:
     # shell=True is the point: `command` is the repo's OWN test command, a shell string
     # the consumer supplies (`test_command`) or that detect.py chose. There is no argv to
-    # split it into. Both markers are needed because bandit reports the call line and
-    # semgrep reports the argument line.
+    # split it into. Two markers, on two different lines, because bandit anchors the
+    # finding on the CALL and semgrep anchors it on the `shell=True` argument.
     return subprocess.run(  # nosec B602
-        command,  # nosemgrep - shell=True is deliberate, see above
-        shell=True,
+        command,
+        shell=True,  # nosemgrep - deliberate, see above
         cwd=cwd,
         check=False,
         timeout=timeout or None,
