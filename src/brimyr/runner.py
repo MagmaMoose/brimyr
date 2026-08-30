@@ -47,8 +47,16 @@ DEFAULT_TEST_TIMEOUT = 3600
 def _default_runner(
     command: str, cwd: str, timeout: float | None = DEFAULT_TEST_TIMEOUT
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(  # nosec B602 - the command is the repo's own test command
-        command, shell=True, cwd=cwd, check=False, timeout=timeout or None
+    # shell=True is the point: `command` is the repo's OWN test command, a shell string
+    # the consumer supplies (`test_command`) or that detect.py chose. There is no argv to
+    # split it into. Both markers are needed because bandit reports the call line and
+    # semgrep reports the argument line.
+    return subprocess.run(  # nosec B602
+        command,  # nosemgrep - shell=True is deliberate, see above
+        shell=True,
+        cwd=cwd,
+        check=False,
+        timeout=timeout or None,
     )
 
 

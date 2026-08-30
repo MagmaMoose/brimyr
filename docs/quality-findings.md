@@ -12,8 +12,9 @@ coverage: net-new only, pre-existing never blocks.
           quality: 'true'
 ```
 
-That runs [Chargate](https://github.com/MagmaMoose/chargate) as a nested step, MegaLinter's quality linters, then net-new classification against the PR diff, and
-folds its verdict into the same job summary and the same PR comment as coverage.
+That runs [Chargate](https://github.com/MagmaMoose/chargate) as a nested step,
+MegaLinter's quality linters, then net-new classification against the PR diff, and folds
+its verdict into the same job summary and the same PR comment as coverage.
 **Report-only by default**; see [Start report-only](#start-report-only).
 
 `action.yml` pins `magmamoose/chargate@528a42e` (v2.11.27), which carries the curated

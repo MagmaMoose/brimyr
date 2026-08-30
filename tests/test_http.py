@@ -35,7 +35,9 @@ def test_authorization_is_dropped_when_the_host_changes():
 
 
 def test_authorization_is_dropped_when_the_scheme_changes():
-    new = _redirect("https://api.example.com/a", "http://api.example.com/a")
+    # The http:// target IS the test: a scheme downgrade must drop the credential.
+    downgraded = "http://api.example.com/a"  # nosec B310 DS137138
+    new = _redirect("https://api.example.com/a", downgraded)
     assert "authorization" not in _headers(new)  # nosec B101
 
 

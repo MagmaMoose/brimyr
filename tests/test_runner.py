@@ -81,7 +81,7 @@ def test_a_hung_suite_is_a_broken_run_not_zero_percent():
     points at everything except the coverage gate. The verdict must be a BROKEN run so
     it exits 2 and goes red, never 0% coverage.
     """
-    import subprocess as sp
+    import subprocess as sp  # nosec B404 - only to build a TimeoutExpired
 
     from brimyr.detect import ecosystem
 
