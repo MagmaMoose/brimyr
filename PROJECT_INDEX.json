@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-26",
+  "generated": "2026-09-02",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -149,18 +149,21 @@
     },
     "runner": {
       "path": "src/brimyr/runner.py",
-      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken \u2014 never a 0% score. Injectable Runner for tests.",
+      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken \u2014 never a 0% score. Injectable Runner for tests. run_command is a separate non-coverage helper for commands that must run (e.g. the SonarScanner-for-.NET build between begin/end) but never produce coverage; its failure never affects the gate.",
       "exports": [
         "run_tests",
         "run_one",
+        "run_command",
         "ingest_file",
         "parse_coverage_text",
         "RunResult",
         "RunOutcome",
+        "CommandOutcome",
         "IngestError"
       ],
       "depends_on": [
         "coverage.cobertura",
+        "coverage.jacoco",
         "coverage.lcov",
         "coverage.model",
         "detect"
@@ -202,7 +205,7 @@
     },
     "github_comment": {
       "path": "src/brimyr/github_comment.py",
-      "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER, or QUALITY_MARKER for a standalone `brimyr lint` run \u2014 two markers because the subcommands can run in either order and one shared marker would mean the later run erased the earlier verdict): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
+      "purpose": "Posts/updates the ONE consolidated patch-coverage comment on a PR. Idempotent by hidden marker (SUMMARY_MARKER, or QUALITY_MARKER for a standalone `brimyr lint` run \u2014 two markers because the subcommands can run in either order and one shared marker would mean the later run erased the earlier verdict): find the prior marked comment and PATCH it, else POST \u2014 so a re-push updates one comment instead of stacking one per commit. The marker is brimyr-specific so brimyr and chargate never claim each other's comment. Pure transport (stdlib urllib via http.build_opener, injectable opener); the body comes from report.render_summary. NEVER raises: a GitHub outage returns ok=False, exactly as sonar never fails the build.",
       "exports": [
         "post_pr_comment",
         "CommentConfig",
@@ -210,18 +213,22 @@
         "SUMMARY_MARKER",
         "QUALITY_MARKER"
       ],
-      "depends_on": []
+      "depends_on": [
+        "http"
+      ]
     },
     "broker_client": {
       "path": "src/brimyr/broker_client.py",
-      "purpose": "The asking half of the token broker: requests the job's Actions OIDC token (aud=brimyr, needs `permissions: id-token: write`) and exchanges it at the broker for a repo-scoped Brimyr[bot] installation token. FAILS SOFT AND SILENTLY \u2014 every failure returns token=None and the caller falls back to GITHUB_TOKEN, so only the byline changes; that silence is why .github/workflows/broker-smoke.yml is not optional. Failure messages only ever echo the broker's fixed error vocabulary, never an exception's text, because a transport error carries the request URL and the OIDC token travels in that request's body. Stdlib urllib, injectable opener.",
+      "purpose": "The asking half of the token broker: requests the job's Actions OIDC token (aud=brimyr, needs `permissions: id-token: write`) and exchanges it at the broker for a repo-scoped Brimyr[bot] installation token. FAILS SOFT AND SILENTLY \u2014 every failure returns token=None and the caller falls back to GITHUB_TOKEN, so only the byline changes; that silence is why .github/workflows/broker-smoke.yml is not optional. Failure messages only ever echo the broker's fixed error vocabulary, never an exception's text, because a transport error carries the request URL and the OIDC token travels in that request's body. Stdlib urllib via http.build_opener (strips credentials on cross-origin redirects), injectable opener.",
       "exports": [
         "mint_bot_token",
         "request_actions_oidc_token",
         "BrokerResult",
         "OIDC_AUDIENCE"
       ],
-      "depends_on": []
+      "depends_on": [
+        "http"
+      ]
     },
     "gate": {
       "path": "src/brimyr/gate.py",
@@ -237,6 +244,14 @@
       "depends_on": [
         "coverage.patch"
       ]
+    },
+    "http": {
+      "path": "src/brimyr/http.py",
+      "purpose": "Shared HTTP hardening for the two stdlib urllib clients (github_comment and broker_client). urllib's default redirect handler re-sends every original header including Authorization onto the redirect target, even across hosts. _SameOriginRedirectHandler overrides redirect_request to strip Authorization, Cookie, Proxy-Authorization, and WWW-Authenticate when the redirect changes scheme, host or port. build_opener() returns an OpenerDirector using that handler; both clients call it in place of urllib.request.build_opener. The exposure is not theoretical: both clients talk to a host the consumer configures (--github-api-url, token_broker_url).",
+      "exports": [
+        "build_opener"
+      ],
+      "depends_on": []
     },
     "quality": {
       "path": "src/brimyr/quality.py",
@@ -528,12 +543,13 @@
     {
       "caller": "runner.run_one",
       "calls": [
-        "detect.locate_coverage_file",
+        "detect.locate_coverage_files",
         "runner.ingest_file",
         "coverage.lcov.parse_lcov",
-        "coverage.cobertura.parse_cobertura"
+        "coverage.cobertura.parse_cobertura",
+        "coverage.jacoco.parse_jacoco"
       ],
-      "note": "Every failure path here produces RunOutcome.error -> RunResult.broken -> exit 2, never a 0% gate failure."
+      "note": "Every failure path here produces RunOutcome.error -> RunResult.broken -> exit 2, never a 0% gate failure. JaCoCo paths are resolved via _jacoco_path_resolver to add the module prefix missing from jacoco.xml, so multi-module builds do not silently merge differently-named classes onto one shared path."
     },
     {
       "caller": "coverage.patch.compute_patch_coverage",
