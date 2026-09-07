@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-02",
+  "generated": "2026-09-07",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -135,7 +135,7 @@
     },
     "detect": {
       "path": "src/brimyr/detect.py",
-      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). JS/TS additionally requires a test signal in package.json before it counts. locate_coverage_file globs the emitted report; locate_coverage_files returns ALL matches (multi-project .NET solutions, multi-module Maven reactors). Java is Maven-only on purpose \u2014 build.gradle is a marker but is not auto-detected, since the built-in command is mvn. Each Ecosystem also declares a SonarStrategy (CLI post-step vs DOTNET wrapping), report globs, a build command and required Sonar props (Java needs sonar.java.binaries or the scan is skipped).",
+      "purpose": "The ECOSYSTEMS table: marker files -> Ecosystem (test command, coverage format, expected report path, Sonar property). Every over-broad marker set carries a `confirm` guard so a repo with no suite is not detected and then failed as a broken run: JS/TS needs a jest/vitest config or a real test script, python needs a pytest config section or a non-vendored test file, Java needs a pom.xml. locate_coverage_file globs the emitted report; locate_coverage_files returns ALL matches (multi-project .NET solutions, multi-module Maven reactors). Java is Maven-only on purpose \u2014 build.gradle is a marker but is not auto-detected, since the built-in command is mvn. Each Ecosystem also declares a SonarStrategy (CLI post-step vs DOTNET wrapping), report globs, a build command and required Sonar props (Java needs sonar.java.binaries or the scan is skipped).",
       "exports": [
         "detect_ecosystems",
         "ecosystem",
@@ -232,7 +232,7 @@
     },
     "gate": {
       "path": "src/brimyr/gate.py",
-      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, and the vacuous pass when nothing coverable changed. GateDecision carries an optional TotalCoverage that nothing gates on.",
+      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, the vacuous pass when nothing coverable changed, and no_ecosystem — a repo with no test suite, which passes and is rendered as `skipped` rather than as a 100% table. GateDecision carries an optional TotalCoverage that nothing gates on.",
       "exports": [
         "decide_gate",
         "GateDecision",

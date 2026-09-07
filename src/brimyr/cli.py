@@ -32,6 +32,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -221,7 +222,11 @@ def _emit_outputs(decision: GateDecision, *, mode: Mode | None, broken: bool) ->
         "covered_lines": str(patch.covered_lines),
         "total_lines": str(patch.total_lines),
         "threshold": f"{decision.threshold:.2f}",
-        "gate_result": "error" if broken else ("fail" if decision.failed else "pass"),
+        "gate_result": (
+            "error"
+            if broken
+            else ("fail" if decision.failed else ("skipped" if decision.no_ecosystem else "pass"))
+        ),
         "gate_failed": "true" if (broken or decision.failed) else "false",
     }
     # Empty string when nothing was measured, never "0.00" — an unmeasured run and a
@@ -526,12 +531,30 @@ def _sonar_paths_for_specs(
     return paths
 
 
+@dataclass(frozen=True)
+class Collected:
+    """What one coverage collection produced, and how to read an empty one.
+
+    An empty ``report`` is ambiguous on its own and the ambiguity is the dangerous
+    part, so the two ways of getting one are separate flags: ``broken`` (a suite ran
+    and failed, or instrumented nothing) is red, ``no_ecosystem`` (there is no suite
+    to run) is green. Neither is "0% coverage", which is a real measurement.
+    """
+
+    report: CoverageReport = field(default_factory=lambda: CoverageReport(()))
+    broken: bool = False
+    ecosystems: list[Ecosystem] = field(default_factory=list)
+    sonar_paths: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    coverage_paths: list[str] = field(default_factory=list)
+    no_ecosystem: bool = False
+
+
 def _collect_coverage(
     args: argparse.Namespace,
-) -> tuple[CoverageReport, bool, list[Ecosystem], dict[str, tuple[str, ...]], list[str]] | int:
+) -> Collected | int:
     """Obtain coverage either from given files (escape hatch) or by running tests.
 
-    Returns ``(report, broken, ecosystems, sonar_paths, coverage_paths)`` or an error
+    Returns a :class:`Collected` or an error
     exit code. ``coverage_paths`` is every report file that was actually read, which the
     HTML renderer needs — ``sonar_paths`` is keyed by Sonar property and so drops any
     ecosystem without one.
@@ -557,12 +580,12 @@ def _collect_coverage(
                 "instrumented the code."
             )
             return EXIT_ERROR
-        return (
-            merged,
-            False,
-            [],
-            _sonar_paths_for_specs(specs, args),
-            [str(path) for path, _ in specs],
+        return Collected(
+            report=merged,
+            broken=False,
+            ecosystems=[],
+            sonar_paths=_sonar_paths_for_specs(specs, args),
+            coverage_paths=[str(path) for path, _ in specs],
         )
 
     # Otherwise detect (or honour forced) ecosystems and run their tests.
@@ -577,10 +600,21 @@ def _collect_coverage(
         ecosystems = detect_ecosystems(args.repo)
 
     if not ecosystems:
-        return _fail(
-            "no ecosystem detected — add a marker file, pass --ecosystem, or supply "
-            "--coverage-file to ingest a pre-made report."
+        # Auto-detection only. A forced `--ecosystem` cannot reach here: every key
+        # either resolved into the list or already returned `unknown ecosystem`.
+        #
+        # Finding nothing means a repo with no test suite, which is not a broken repo.
+        # Failing it is what stopped Brimyr being provisionable fleet-wide: every repo
+        # that is charts, Terraform, prompts or docs would go permanently red on a gate
+        # it can never satisfy, so the gate had to be adopted one repo at a time. Pass —
+        # but WARN and say so in the summary, because the same silence would hide a real
+        # suite that stopped being detected.
+        _warn(
+            "no test suite detected, so nothing was run and nothing is gated. Add a "
+            "marker file, set `ecosystem`, or supply `coverage_file` if this repo does "
+            "have tests."
         )
+        return Collected(no_ecosystem=True)
 
     result: RunResult = run_tests(
         ecosystems,
@@ -603,7 +637,13 @@ def _collect_coverage(
             )
         if outcome.error:
             _eprint(f"brimyr: {outcome.ecosystem.label}: {outcome.error}")
-    return result.report, result.broken, ecosystems, sonar_paths, coverage_paths
+    return Collected(
+        report=result.report,
+        broken=result.broken,
+        ecosystems=ecosystems,
+        sonar_paths=sonar_paths,
+        coverage_paths=coverage_paths,
+    )
 
 
 def _sonar_config(
@@ -855,8 +895,11 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     collected = _collect_coverage(args)
     if isinstance(collected, int):
         return collected
-    report, broken, ecosystems, sonar_paths, coverage_paths = collected
-    html_message = _maybe_render_html(args, coverage_paths)
+    report = collected.report
+    broken = collected.broken
+    ecosystems = collected.ecosystems
+    no_ecosystem = collected.no_ecosystem
+    html_message = _maybe_render_html(args, collected.coverage_paths)
 
     # One policy for both numbers. Total coverage has to honour the same exclude globs
     # as the patch gate, or a PR comment shows two figures disagreeing by twenty points
@@ -865,7 +908,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     policy = _patch_policy(args, (repo_abs,))
 
     # Patch coverage only in gate mode; baseline computes nothing to gate on.
-    if mode.gates and not broken:
+    if mode.gates and not broken and not no_ecosystem:
         if not args.base:
             return _fail("PR/gate mode needs --base (the PR target ref).")
         try:
@@ -887,6 +930,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
             gate=mode.gates,
             total=total,
             min_lines=args.min_lines,
+            no_ecosystem=no_ecosystem,
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -894,7 +938,11 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     wrapped = any(e.sonar_strategy is SonarStrategy.DOTNET for e in ecosystems)
     # The .NET scanner analyses the whole tree; a second plain `sonar-scanner` run
     # against the same projectKey would overwrite what it just uploaded.
-    sonar_message = None if (broken or wrapped) else _maybe_run_sonar(args, sonar_paths, ecosystems)
+    sonar_message = (
+        None
+        if (broken or wrapped or no_ecosystem)
+        else _maybe_run_sonar(args, collected.sonar_paths, ecosystems)
+    )
     if html_message:
         _eprint(f"brimyr: html report: {html_message}")
 

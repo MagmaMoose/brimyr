@@ -10,6 +10,10 @@ the gate:
   tool error, not a finding.
 * **Nothing coverable changed.** A docs/config-only PR has an empty denominator
   and passes vacuously (100%).
+* **No test suite at all.** A repo with nothing to run is not a broken repo. It
+  passes, loudly: the summary says the gate did not apply rather than printing a
+  comfortable 100%. This is what makes Brimyr safe to provision fleet-wide instead
+  of adopting it repo by repo.
 
 Exit-code contract: ``0`` pass · ``1`` patch coverage below threshold · ``2``
 broken run / setup error (the CLI maps usage errors here too).
@@ -57,6 +61,11 @@ class GateDecision:
     # coverage gate quietly stops meaning anything.
     min_lines: int = DEFAULT_MIN_LINES
     below_min_lines: bool = False
+    # No ecosystem was detected, so no tests were run and there is nothing to gate.
+    # Distinct from `broken` (a suite that exists and failed) and from an empty
+    # denominator (a suite that ran and covered nothing this PR touched). Conflating
+    # any two of those three is how a coverage gate stops meaning anything.
+    no_ecosystem: bool = False
 
     @property
     def percent(self) -> float:
@@ -77,10 +86,13 @@ def decide_gate(
     gate: bool = True,
     total: TotalCoverage | None = None,
     min_lines: int = DEFAULT_MIN_LINES,
+    no_ecosystem: bool = False,
 ) -> GateDecision:
     """Decide whether patch coverage blocks, given a threshold.
 
-    ``broken`` forces an error verdict (a failed/empty test run). ``gate=False``
+    ``broken`` forces an error verdict (a failed/empty test run). ``no_ecosystem``
+    forces a PASS: no suite was found, so nothing ran and nothing can be judged.
+    ``broken`` wins if both are somehow set. ``gate=False``
     makes the run report-only (baseline mode) — coverage is computed and shipped,
     nothing blocks. ``min_lines`` is the sample size below which the percentage is too
     coarse to be worth gating on (see :data:`DEFAULT_MIN_LINES`); 0 gates everything.
@@ -91,7 +103,7 @@ def decide_gate(
         raise ValueError(f"min_lines must be >= 0, got {min_lines}")
 
     too_small = 0 < patch.total_lines < min_lines
-    if broken or not gate:
+    if broken or no_ecosystem or not gate:
         failed = False
     elif not patch.has_measurable:
         failed = False  # nothing coverable changed → vacuous pass
@@ -109,4 +121,5 @@ def decide_gate(
         total=total,
         min_lines=min_lines,
         below_min_lines=too_small,
+        no_ecosystem=no_ecosystem,
     )

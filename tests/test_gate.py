@@ -123,3 +123,45 @@ def test_negative_min_lines_rejected(make_report):
     patch = _patch(make_report, covered=1, total=2)
     with pytest.raises(ValueError, match="min_lines"):
         decide_gate(patch, 80.0, min_lines=-1)
+
+
+# ------------------------- no suite is not a broken suite -------------------------
+
+
+def test_no_ecosystem_passes_rather_than_erroring(make_report):
+    """A repo with no test suite is not a broken repo.
+
+    Three states share an empty report and only one of them is red: `broken` (a suite
+    ran and failed, or instrumented nothing), `no_ecosystem` (there is no suite), and a
+    real 0% measurement. Conflating the first two is what forced Brimyr to be adopted
+    repo by repo instead of provisioned org-wide.
+    """
+    patch = _patch(make_report, covered=0, total=0)
+    decision = decide_gate(patch, 80.0, no_ecosystem=True)
+    assert not decision.failed
+    assert not decision.broken
+    assert decision.no_ecosystem
+    assert decision.exit_code == EXIT_OK
+
+
+def test_no_ecosystem_does_not_launder_a_real_shortfall(make_report):
+    """Belt and braces: the flag is set by detection finding nothing, and a run that
+    found nothing has nothing to measure. If the two ever disagree, the flag must not be
+    able to turn a measured shortfall green by itself."""
+    patch = _patch(make_report, covered=7, total=10)  # 70%
+    gated = decide_gate(patch, 80.0, min_lines=0)
+    assert gated.failed
+    assert not gated.no_ecosystem
+
+
+def test_a_broken_run_outranks_no_ecosystem(make_report):
+    """Both set is a contradiction, and the safe reading of a contradiction is red."""
+    patch = _patch(make_report, covered=0, total=0)
+    decision = decide_gate(patch, 80.0, broken=True, no_ecosystem=True)
+    assert decision.exit_code == EXIT_ERROR
+
+
+def test_no_ecosystem_defaults_off(make_report):
+    """Trailing and defaulted, so every caller that predates the flag is unchanged."""
+    decision = decide_gate(_patch(make_report, covered=8, total=10), 80.0)
+    assert decision.no_ecosystem is False

@@ -80,6 +80,76 @@ class Ecosystem:
         return " ".join(self.test_command)
 
 
+#: Directory names a test-file search must never descend into. On a fresh checkout none
+#: of these exist yet, but `brimyr local` runs against a working tree where they all do,
+#: and one vendored `test_foo.py` under .venv would make every repo look tested.
+_VENDOR_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".tox",
+        ".nox",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        "site-packages",
+        "vendor",
+        "third_party",
+        ".mypy_cache",
+        ".pytest_cache",
+    }
+)
+
+#: Where a pytest configuration lives, and the section that makes it one. `tox.ini` and
+#: `setup.cfg` are also bare python MARKERS, so their presence alone proves nothing; the
+#: section inside is the signal.
+_PYTEST_CONFIG_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("pyproject.toml", "[tool.pytest.ini_options]"),
+    ("pytest.ini", "[pytest]"),
+    ("setup.cfg", "[tool:pytest]"),
+    ("tox.ini", "[pytest]"),
+)
+
+
+def _python_has_test_signal(root: Path) -> bool:
+    """True if the repo has a real Python test setup, not just a packaging marker.
+
+    The python markers are the most over-broad of any ecosystem here: a
+    `requirements.txt` or a `pyproject.toml` is shipped by repos with no Python source
+    at all (a `pre-commit` config's pins, a docs build, a Terraform repo's tooling).
+    Detecting python off the bare marker runs `pytest --cov`, which exits 5 with "no
+    tests ran" — an empty coverage report, which the broken-run rule then correctly
+    reads as a tool error and turns the build red. A repo with nothing to test is not a
+    broken repo, so it must not be detected in the first place.
+
+    Exactly the reasoning behind :func:`_js_has_test_signal` and :func:`_java_is_maven`;
+    python was simply the one marker set that never got the guard. Bypassed by an
+    explicit ``--ecosystem python``, which is the escape hatch for a layout this misses.
+    """
+    for name, section in _PYTEST_CONFIG_SECTIONS:
+        try:
+            if section in (root / name).read_text(encoding="utf-8", errors="ignore"):
+                return True
+        except OSError:
+            continue
+    return _has_test_file(root, ("test_*.py", "*_test.py"))
+
+
+def _has_test_file(root: Path, patterns: tuple[str, ...]) -> bool:
+    """True as soon as ONE non-vendored file matches, without walking the rest.
+
+    Short-circuits, so the common case (a repo that has tests) is cheap; only a repo
+    with none pays for the full walk, and that is the answer we need to be sure of.
+    """
+    for pattern in patterns:
+        for match in root.glob(f"**/{pattern}"):
+            if _VENDOR_DIRS.isdisjoint(match.parts):
+                return True
+    return False
+
+
 def _js_has_test_signal(root: Path) -> bool:
     """True if the repo has a real JS/TS test setup, not just a bare package.json.
 
@@ -162,6 +232,7 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         coverage_format=CoverageFormat.COBERTURA,
         coverage_paths=("coverage.xml",),
         sonar_property="sonar.python.coverage.reportPaths",
+        confirm=_python_has_test_signal,
     ),
     Ecosystem(
         key="javascript",
