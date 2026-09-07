@@ -145,7 +145,7 @@ def _has_test_file(root: Path, patterns: tuple[str, ...]) -> bool:
     """
     for pattern in patterns:
         for match in root.glob(f"**/{pattern}"):
-            if _VENDOR_DIRS.isdisjoint(match.parts):
+            if _VENDOR_DIRS.isdisjoint(match.relative_to(root).parts):
                 return True
     return False
 
