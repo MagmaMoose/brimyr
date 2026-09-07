@@ -34,3 +34,23 @@ diff corpus) are in `SUBSYSTEMS.md` — read that when you touch one of those.
   under 20 changed executable lines. Tests asserting threshold behaviour on small
   fixtures need `min_lines=0` or they pass for the wrong reason. Never silent.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.
+
+- **An empty coverage report has THREE causes and only one of them is red.** A suite that
+  ran and failed (`broken`) is a tool error. A real 0% is a measurement. A repo with no
+  suite at all is neither — and until now it was the loudest possible error: `no ecosystem
+  detected` → exit 2. That single line is why Brimyr had to be adopted one repo at a time
+  instead of provisioned like Chargate: every charts / Terraform / prompts / docs repo in
+  the org would have gone permanently red on a gate it can never satisfy. `no_ecosystem`
+  is now its own state on `GateDecision` — green, `gate_result=skipped`, and the summary
+  REPLACES the coverage table rather than printing "100% · 0/0 lines", which is
+  indistinguishable from a well-tested PR. Never let those two renderings converge; a repo
+  that quietly lost detection has to look different from one that passed.
+- **`pyproject.toml` is not evidence of a test suite.** It is the most over-broad marker in
+  the table — a docs build, a pre-commit pin list and a Terraform repo's tooling all ship
+  one — and detecting python off it runs `pytest --cov`, which exits 5 with "no tests ran"
+  and an empty report, which the broken-run rule then correctly calls an error. JavaScript
+  got `_js_has_test_signal` and Java got `_java_is_maven` for exactly this; python was the
+  one marker set that never got the guard. Its confirm looks for a pytest config SECTION
+  (not the file: `tox.ini` and `setup.cfg` are themselves markers) or a real test file,
+  pruning vendored directories — `brimyr local` runs against a working tree where one
+  `test_*.py` under `.venv/…/site-packages` would make every repo look tested.

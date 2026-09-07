@@ -144,7 +144,7 @@ gates.
 | Output | Description |
 | --- | --- |
 | `mode` | Resolved run mode: `pr` or `baseline`. |
-| `gate_result` | `pass`, `fail` or `error`. `error` means a broken run, never 0% coverage. |
+| `gate_result` | `pass`, `fail`, `error` or `skipped`. `error` means a broken run, never 0% coverage; `skipped` means no test suite was detected, so nothing ran and nothing was gated. Neither is a measurement. |
 | `patch_coverage` | Patch coverage percentage, two decimal places. |
 | `covered_lines` | Covered changed executable lines. |
 | `total_lines` | Total changed executable lines, the patch-coverage denominator. |

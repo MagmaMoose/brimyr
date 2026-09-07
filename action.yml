@@ -213,7 +213,7 @@ outputs:
     description: 'Resolved run mode (pr | baseline).'
     value: ${{ steps.brimyr.outputs.mode }}
   gate_result:
-    description: 'pass | fail | error.'
+    description: 'pass | fail | error | skipped (no test suite detected).'
     value: ${{ steps.brimyr.outputs.gate_result }}
   patch_coverage:
     description: 'Patch coverage percentage (covered changed executable lines / total).'

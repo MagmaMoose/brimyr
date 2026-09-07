@@ -178,3 +178,26 @@ def test_the_quality_heading_is_a_sibling_of_the_coverage_one(make_report):
     quality = render_quality_summary(_quality())
     assert coverage.split("\n")[0] == "## Brimyr: Quality Assurance"  # nosec B101
     assert quality.split("\n")[0] == "## Brimyr: Net-new findings"  # nosec B101
+
+
+def test_no_suite_summary_says_skipped_and_prints_no_table(make_report):
+    """The dangerous rendering is the honest-looking one.
+
+    An empty report through the normal path renders "100% · 0/0 lines", which is
+    indistinguishable from a well-tested PR. A repo that never had a suite, and a repo
+    that quietly lost detection, both land here — so the block has to replace the table
+    rather than sit above it.
+    """
+    decision = _decision(make_report, 0, 0, no_ecosystem=True)
+    out = render_summary(decision, Mode.PR)
+    assert "`skipped`" in out
+    assert "No test suite detected" in out
+    assert "Patch coverage" not in out
+    assert "100.0%" not in out
+
+
+def test_no_suite_summary_does_not_claim_the_code_is_fine(make_report):
+    """It is a statement about Brimyr, not about the pull request."""
+    out = render_summary(_decision(make_report, 0, 0, no_ecosystem=True), Mode.PR)
+    assert "not** a verdict on the code" in out
+    assert "`coverage_file`" in out  # tells the reader how to fix a missed suite

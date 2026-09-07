@@ -41,6 +41,8 @@ def render_summary(
         status = "`error`"
     elif decision.failed:
         status = "`fail`"
+    elif decision.no_ecosystem:
+        status = "`skipped`"
     else:
         status = "`pass`"
 
@@ -53,6 +55,19 @@ def render_summary(
         lines.append(
             "> ❌ **Broken test run** — the tests failed or produced no coverage. "
             "This is a tool error (build red), **not** 0% patch coverage."
+        )
+        lines.append("")
+        return "\n".join(lines)
+
+    # Said out loud, and BEFORE the table, because the table would otherwise read
+    # "100% · 0/0 lines" — indistinguishable from a well-tested PR. A repo that has
+    # quietly lost detection must not look like one that passed.
+    if decision.no_ecosystem:
+        lines.append(
+            "> ⚪ **No test suite detected** — no ecosystem marker matched, so nothing was "
+            "run and there is nothing to gate. This is **not** a verdict on the code: if "
+            "this repo does have tests, Brimyr is not finding them (set `ecosystem` or "
+            "`coverage_file` on the action)."
         )
         lines.append("")
         return "\n".join(lines)

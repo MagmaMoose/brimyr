@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from brimyr.detect import (
     CoverageFormat,
     detect_ecosystems,
@@ -13,6 +15,8 @@ from brimyr.detect import (
 
 def test_detect_python(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_thing.py").write_text("def test_x(): pass\n")
     found = detect_ecosystems(tmp_path)
     assert [e.key for e in found] == ["python"]
     assert found[0].coverage_format is CoverageFormat.COBERTURA
@@ -55,7 +59,9 @@ def test_detect_dotnet_by_glob(tmp_path):
 
 
 def test_detect_polyglot(tmp_path):
-    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n[tool.pytest.ini_options]\ntestpaths = ['tests']\n"
+    )
     (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
     found = detect_ecosystems(tmp_path)
     assert {e.key for e in found} == {"python", "javascript"}
@@ -150,7 +156,9 @@ def test_jest_repo_is_untouched(tmp_path):
 
 def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
     """One JS run, not two — the variant replaces the entry, never adds a row."""
-    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n[tool.pytest.ini_options]\ntestpaths = ['tests']\n"
+    )
     (tmp_path / "package.json").write_text('{"devDependencies": {"vitest": "^2"}}')
     (tmp_path / "vitest.config.ts").write_text("export default {}\n")
     found = detect_ecosystems(tmp_path)
@@ -175,3 +183,65 @@ def test_detect_dotnet_from_a_slnx_solution(tmp_path):
 def test_dotnet_still_detected_from_a_classic_sln(tmp_path):
     (tmp_path / "Demo.sln").write_text("Microsoft Visual Studio Solution File\n")
     assert [e.key for e in detect_ecosystems(tmp_path)] == ["dotnet"]  # nosec B101
+
+
+# ----------------------- python needs a real test signal -----------------------
+# The guard that makes Brimyr provisionable fleet-wide instead of adopted repo by repo.
+# `pyproject.toml` / `requirements.txt` / `tox.ini` are the most over-broad markers in
+# the table: a docs build, a pre-commit pin list and a Terraform repo's tooling all ship
+# one. Detecting python off the bare marker runs `pytest --cov`, which exits 5 with "no
+# tests ran" and an empty report — which the broken-run rule then correctly reads as a
+# tool error and turns red. Exactly the reasoning behind _js_has_test_signal and
+# _java_is_maven; python was the one marker set that never got it.
+
+
+def test_a_bare_pyproject_with_no_tests_is_not_python(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'docs'\n")
+    (tmp_path / "requirements.txt").write_text("mkdocs\n")
+    assert detect_ecosystems(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [("pytest.ini", "[pytest]\n"), ("setup.cfg", "[tool:pytest]\n"), ("tox.ini", "[pytest]\n")],
+)
+def test_a_pytest_config_is_signal_enough(tmp_path, name, body):
+    """A repo whose tests live somewhere the glob cannot reach still declares pytest."""
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / name).write_text(body)
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+def test_a_tox_ini_without_a_pytest_section_is_not_signal(tmp_path):
+    # tox.ini is itself a python MARKER, so its presence proves nothing on its own —
+    # the [pytest] section inside it is the signal, not the file.
+    (tmp_path / "tox.ini").write_text("[tox]\nenvlist = py312\n")
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_a_vendored_test_file_is_not_this_repos_suite(tmp_path):
+    """`brimyr local` runs against a working tree, where .venv and node_modules exist.
+
+    Without the prune, one upstream `test_*.py` under site-packages makes every repo on
+    the machine look tested.
+    """
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    vendored = tmp_path / ".venv" / "Lib" / "site-packages" / "pkg"
+    vendored.mkdir(parents=True)
+    (vendored / "test_upstream.py").write_text("def test_x(): pass\n")
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_a_test_file_below_the_root_is_signal(tmp_path):
+    # A backend/frontend split: the suite is nowhere near the marker that found it.
+    (tmp_path / "requirements.txt").write_text("fastapi\n")
+    nested = tmp_path / "backend" / "tests"
+    nested.mkdir(parents=True)
+    (nested / "test_api.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+def test_the_trailing_suffix_form_counts_too(tmp_path):
+    (tmp_path / "setup.py").write_text("from setuptools import setup\n")
+    (tmp_path / "thing_test.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]

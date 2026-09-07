@@ -771,3 +771,79 @@ def test_a_literal_path_is_untouched(repo, tmp_path):
     _cobertura_at(cov, "a.py", {4: 1, 5: 1})
     code = main(["coverage", "--coverage-file", str(cov), "--base", base, "--repo", str(repo_dir)])
     assert code == 0  # nosec B101
+
+
+# --------------------- a repo with no test suite is not an error ---------------------
+
+
+def test_ci_on_a_repo_with_no_test_suite_passes_and_says_so(repo, tmp_path, capsys):
+    """The `repo` fixture is one .py file and no marker of any kind — the shape of every
+    charts / Terraform / prompts repo in an org. This used to exit 2 ("no ecosystem
+    detected"), which is why the gate had to be adopted per repo rather than provisioned:
+    every such repo would have gone permanently red on a gate it can never satisfy.
+    """
+    import json
+
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+    assert code == 0
+    # Loud, not silent: the same quiet pass would hide a real suite that stopped being
+    # detected, which is the failure this must never become.
+    assert "no test suite detected" in capsys.readouterr().err
+    assert json.loads(out.read_text())["total_lines"] == 0
+
+
+def test_ci_with_no_test_suite_does_not_need_a_base_ref(repo, tmp_path):
+    """`--base` exists to compute the diff. With nothing to measure there is no diff to
+    compute, so demanding it would fail a repo for missing an input it cannot use."""
+    repo_dir, _base = repo
+    assert main(["ci", "--mode", "pr", "--repo", str(repo_dir)]) == 0
+
+
+def test_ci_reports_no_suite_as_skipped_not_as_a_pass(repo, tmp_path, monkeypatch):
+    """`gate_result` has to distinguish the three states, or a downstream `if` reading it
+    cannot tell "nothing was checked" from "checked and clean"."""
+    repo_dir, base = repo
+    outputs = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    assert main(["ci", "--mode", "pr", "--base", base, "--repo", str(repo_dir)]) == 0
+    written = outputs.read_text()
+    assert "gate_result=skipped" in written
+    assert "gate_failed=false" in written
+
+
+def test_ci_a_repo_that_does_have_tests_is_still_gated(repo, tmp_path):
+    """The guard must not swallow a real suite: a python repo with tests still runs and
+    still fails below the threshold."""
+    repo_dir, base = repo
+    cov = tmp_path / "coverage.xml"
+    _cobertura(cov, {4: 1, 5: 0})  # 50% of the changed lines
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--coverage-file",
+            str(cov),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
+    assert code == 1

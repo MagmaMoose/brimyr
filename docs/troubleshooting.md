@@ -91,22 +91,30 @@ across unrelated histories such as an orphan branch.
 Fetch the base, or pass `--no-merge-base` to diff the two refs directly without a common
 ancestor.
 
-## `no ecosystem detected`
+## `No test suite detected`: the run passed but nothing was gated
 
-The full message names all three fixes:
+Not an error. Auto-detection found no ecosystem marker, so no tests ran and there is
+nothing to gate: the job is green, `gate_result` is `skipped`, and the summary says so
+in place of the coverage table.
 
-```text
-no ecosystem detected, add a marker file, pass --ecosystem, or supply --coverage-file
-to ingest a pre-made report.
-```
+This is what makes Brimyr safe to provision across a whole org rather than adopt one
+repo at a time. A charts, Terraform, prompts or docs repo has nothing to test, and
+failing it would mean a permanently red check on a gate it can never satisfy.
 
-Detection looks for `pyproject.toml`, `package.json`, `*.sln` / `*.csproj`, or `pom.xml` in
-the repo root. Two cases surprise people:
+**If the repo DOES have tests, this is the bug, not the fix.** The warning is loud on
+purpose. Detection needs one of:
 
-- **A bare `package.json`** with no test script and no jest or vitest config is deliberately
-  not detected, so Brimyr doesn't run `jest` against a repo that only ships frontend assets.
-- **Gradle** is recognised as Java but not auto-detected, because the built-in command is
-  `mvn`. Pass `ecosystem: 'java'` with your own `test_command`.
+- `pyproject.toml` / `setup.py` / `setup.cfg` / `requirements.txt` / `tox.ini` **plus a
+  real Python test signal**: a `test_*.py` or `*_test.py` file anywhere outside
+  `.venv` / `node_modules` / other vendored directories, or a pytest section
+  (`[tool.pytest.ini_options]`, `[pytest]`, `[tool:pytest]`).
+- `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
+- `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
+- `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
+
+Force it with `ecosystem:`, or skip detection entirely with `coverage_file:`. A forced
+`ecosystem:` that then fails is still an error: explicit intent is never downgraded to
+a skip.
 
 ## The tests ran but the build is red with exit 2
 
