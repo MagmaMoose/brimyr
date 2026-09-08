@@ -50,7 +50,7 @@ Brimyr does it, using whatever the repo already declares:
 | `requirements*.txt` and nothing else | `uv run --with pytest-cov --with-requirements <file> <test command>` |
 | Poetry 1.x (`[tool.poetry]`, no `[project]`) | `poetry install`, then `poetry run <test command>` |
 | `package.json` with no `node_modules` | `npm ci` (falling back to `npm install`), then the detected command |
-| Maven, .NET | nothing — `mvn` and `dotnet test` restore their own |
+| Maven, .NET | nothing: `mvn` and `dotnet test` restore their own |
 
 `pytest-cov` is injected because it is Brimyr's requirement, not yours: a repo can have
 a complete pytest setup and still fail `pytest --cov` on an unrecognised argument. It is
@@ -58,7 +58,7 @@ added to the run, never to your lockfile.
 
 Nothing is installed into the job's own interpreter. Provisioning declines, and says why
 on stderr, whenever the repo shows no shape it can act on or the tool that owns it is
-missing — the run then proceeds exactly as before.
+missing. The run then proceeds exactly as before.
 
 Set `provision: 'false'` when the job installs dependencies itself. Setting
 `test_command` disables it too: an explicit command is your contract, so its setup is

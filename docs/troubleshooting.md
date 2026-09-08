@@ -118,18 +118,18 @@ a skip.
 
 ## `the test command did not run: ... command not found`
 
-Nothing on the runner could launch the test binary — most often `pytest` or `jest` on a
-job that never installed the repo's dependencies. Nothing was measured, so this is a
-broken run (exit 2), not 0% coverage.
+Nothing on the runner could launch the test binary. Usually that is `pytest` or `jest`
+on a job that never installed the repo's dependencies. Nothing was measured, so this is
+a broken run (exit 2), not 0% coverage.
 
 Brimyr normally installs them for you: with `provision` on (the default) it uses the
 repo's own dependency manager, so a `uv.lock` repo runs under `uv run` and a
 `package.json` repo gets an `npm ci` first. The line above this error says why that
-declined — the common ones:
+declined. The common ones:
 
 | Line | Fix |
 | --- | --- |
-| ``` `uv` is not on PATH — running tests as-is ``` | The action installs `uv` for you when `provision` is `true`; you'll only see this outside the action, e.g. `brimyr local`. Install `uv`, or install your test dependencies. |
+| ``` `uv` is not on PATH ``` | The action installs `uv` for you when `provision` is `true`, so you'll only see this outside the action, e.g. `brimyr local`. Install `uv`, or install your test dependencies. |
 | `no installable Python project found` | No `pyproject.toml`, no `requirements*.txt`. Add one, or set `test_command`. |
 | ``` poetry project, but `poetry` is not on PATH ``` | A pre-2.0 Poetry layout (`[tool.poetry]`, no `[project]`). Install Poetry in the job. |
 
@@ -140,7 +140,7 @@ provisioning too), or skip the test run with `coverage_file`. The full table is 
 
 ## `dependency install failed`
 
-The provisioning step itself exited non-zero — `npm ci` against a stale lockfile,
+The provisioning step itself exited non-zero: `npm ci` against a stale lockfile,
 `poetry install` on an unresolvable graph, `uv run` on a lockfile that no longer matches
 `pyproject.toml`. The tests were **not** run, so again this is a broken run, not a
 coverage number. The failing command and its exit code are in the message; run it

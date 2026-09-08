@@ -4,7 +4,7 @@
 
 Brimyr gates a pull request on two things: **patch coverage** (always) and **net-new
 quality findings** (opt-in). It runs your tests **on the runner**, and by default it
-installs their dependencies first using whatever your repo already declares — `uv run`,
+installs their dependencies first using whatever your repo already declares: `uv run`,
 `poetry run`, `npm ci`. So the minimal wiring is the action on its own, with no setup
 step: that is what makes it provisionable fleet-wide.
 
@@ -46,8 +46,8 @@ non-gating baseline that still feeds the trend.
 
 No checkout step: the action checks out with `fetch-depth: 0` by default, which is what
 patch coverage needs. Add your own `actions/checkout@v6` with `fetch-depth: 0` and set
-`checkout: 'false'` **only** if an earlier step in the job needs the workspace — the
-action's own checkout would run too late for it.
+`checkout: 'false'` **only** if an earlier step in the job needs the workspace, because
+the action's own checkout would run too late for it.
 
 Every input and output is in the [Action reference](action.md).
 

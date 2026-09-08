@@ -152,6 +152,13 @@ setting. The numbers behind the `[cost]` rule in `CLAUDE.md`:
   a named constant over a literal so the finding never fires.
 - chargate gates on **net-new** findings only, so a stale inline thread from an earlier
   push can block a PR after the code is already fixed — re-check the run, then resolve.
+- **`docs/` may not contain an em-dash or en-dash.** `ci.yml`'s "Docs voice" step is a
+  bare `grep -rn '[—–]' docs/` and fails the `test` check on a hit. It covers `docs/`
+  ONLY: prose in `.claude/*.md`, `CLAUDE.md`, `AGENTS.md` and the runtime strings in
+  `cli.py` use them freely, which is exactly why it is easy to write a docs page in the
+  house voice and fail. Reach for a colon, a comma, parentheses, or two sentences. Run
+  the grep before pushing docs; `mkdocs build --strict` and markdownlint both pass a
+  page that this gate rejects.
 
 ## The quality half (`quality.py`, `brimyr lint`)
 
