@@ -85,7 +85,12 @@ def test_poetry_1x_layout_uses_poetry_not_uv(tmp_path):
     assert result.command == f"poetry run {PY.command_str()}"
 
 
-def test_poetry_that_already_declares_pytest_cov_is_left_alone(tmp_path):
+def test_pytest_cov_in_a_poetry_group_is_not_reinstalled(tmp_path):
+    """The only cover for `_poetry_declares`' named-group traversal — keep the group.
+
+    Rewriting this fixture to a flat `[tool.poetry.dependencies]` would still pass while
+    leaving `[tool.poetry.group.*.dependencies]` completely unguarded.
+    """
     (tmp_path / "pyproject.toml").write_text(
         "[tool.poetry]\nname = 'x'\n[tool.poetry.group.dev.dependencies]\npytest-cov = '*'\n"
     )
