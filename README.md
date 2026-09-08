@@ -42,7 +42,7 @@ separate "measure coverage" pass. Brimyr auto-detects which command to run:
 
 | Ecosystem | Markers | Test command | Coverage |
 | --- | --- | --- | --- |
-| **Python** | `pyproject.toml`, `setup.py`, `tox.ini`, … | `pytest --cov --cov-report=xml` | Cobertura |
+| **Python** | `pyproject.toml`, `setup.py`, `tox.ini`, … | `pytest --cov --cov-report=xml`, prefixed with `uv run` when a `uv.lock` is present | Cobertura |
 | **JS / TS** | `package.json` | `jest --coverage --coverageReporters=lcov` | lcov |
 | **.NET** | `*.csproj`, `*.sln`, … | `dotnet test --collect:"XPlat Code Coverage"` | Cobertura |
 
@@ -85,8 +85,9 @@ jobs:
 On PRs it runs your tests with coverage, gates on patch coverage, and (if
 `sonar_url` is set) ships to SonarQube. On push to the default branch it runs a
 non-gating baseline that still feeds the trend. Brimyr runs the tests **on the
-runner**, so install the toolchain/deps in `setup` (or feed a ready-made report
-via `coverage_file`).
+runner**, so install the toolchain/deps in `setup` (available on both surfaces), or
+feed a ready-made report via `coverage_file`. A uv repo needs neither: it is detected
+from its `uv.lock` and run through `uv run`, which syncs the environment itself.
 
 ### 2. Composite action
 
@@ -104,10 +105,10 @@ jobs:
     steps:
       - uses: actions/setup-python@v6
         with: { python-version: '3.12' }
-      - run: pip install -e '.[test]'          # your test deps
       - uses: magmamoose/brimyr@v1
         with:
           checkout: 'false'                     # you already checked out
+          setup: pip install -e '.[test]'       # your test deps (a uv repo needs none)
           threshold: '85'
           # sonar_url: https://sonar.example.com
           # sonar_token: ${{ secrets.SONAR_TOKEN }}

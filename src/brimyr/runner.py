@@ -24,7 +24,7 @@ from pathlib import Path
 from brimyr.coverage.cobertura import CoberturaError, parse_cobertura
 from brimyr.coverage.lcov import parse_lcov
 from brimyr.coverage.model import CoverageReport, merge_reports
-from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_file
+from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_file, resolve_command
 
 # A runner takes (command_string, cwd) and returns the completed process.
 Runner = Callable[[str, str], subprocess.CompletedProcess]
@@ -107,7 +107,11 @@ def run_one(
     """Run a single ecosystem's tests and ingest its coverage file."""
     run_fn = runner or _default_runner
     repo_str = str(repo)
-    cmd = command or eco.command_str()
+    # resolve_command, not eco.command_str(): the ecosystem knows what to run, the
+    # repo decides how (a uv project's pytest is not on PATH). Applied here rather
+    # than in detection so a `--ecosystem`-forced run gets it too. An explicit
+    # `command` still wins — an override is an override.
+    cmd = command or resolve_command(eco, repo)
 
     try:
         completed = run_fn(cmd, repo_str)

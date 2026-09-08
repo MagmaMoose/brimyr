@@ -139,6 +139,45 @@ def ecosystem(key: str) -> Ecosystem | None:
     return _BY_KEY.get(key.strip().lower())
 
 
+# Python package managers that own the project's virtualenv. When one manages the
+# repo, the test tools live in THAT environment and are not on PATH — a bare
+# `pytest` is "command not found" no matter how correctly the project declares its
+# dev dependencies, so the command has to be run through the manager.
+#
+# Keyed on the lock file, not `[tool.uv]` in pyproject.toml: the action installs the
+# manager behind the same signal (`hashFiles('uv.lock')`), and it cannot grep file
+# contents. Detecting on something the action cannot see would resolve to a command
+# whose binary was never installed — trading `pytest: not found` for `uv: not found`.
+_PYTHON_ENV_MANAGERS: tuple[tuple[str, tuple[str, ...]], ...] = (("uv.lock", ("uv", "run")),)
+
+
+def python_env_manager(root: str | Path = ".") -> tuple[str, ...]:
+    """The prefix that runs a command inside the repo's managed env, or ``()``.
+
+    ``("uv", "run")`` for a uv project, empty for a plain-PATH one.
+    """
+    base = Path(root)
+    for lock, prefix in _PYTHON_ENV_MANAGERS:
+        if (base / lock).is_file():
+            return prefix
+    return ()
+
+
+def resolve_command(eco: Ecosystem, repo: str | Path = ".") -> str:
+    """The test command for ``eco`` as it must be run **in this repo**.
+
+    Detection picks *what* to run; this picks *how*. Only Python differs today: its
+    tools are per-project, so a managed environment has to be entered first. The
+    JS and .NET commands already shell out through their own runners (``npx``,
+    ``dotnet``), which resolve project-local tools themselves.
+    """
+    if eco.key == "python":
+        prefix = python_env_manager(repo)
+        if prefix:
+            return " ".join((*prefix, *eco.test_command))
+    return eco.command_str()
+
+
 def _has_marker(root: Path, markers: tuple[str, ...]) -> bool:
     for marker in markers:
         if "*" in marker or "?" in marker:

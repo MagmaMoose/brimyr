@@ -80,6 +80,19 @@ inputs:
     required: false
     default: 'brimyr-coverage'
 
+  setup:
+    description: >-
+      Shell command run before the gate, to install the repo's test toolchain and
+      dependencies (npm ci, pip install -e '.[test]', dotnet restore, …). Brimyr runs
+      the tests on the runner, so they have to be present — nothing here installs a
+      consumer's own dependencies. uv projects need nothing: they are detected from
+      uv.lock and run through `uv run`, which syncs the environment itself. The
+      reusable workflow (.github/workflows/gate.yml) has carried this input since the
+      start; the action did not, which left every consumer of the action alone with a
+      toolchain it could not install.
+    required: false
+    default: ''
+
   python_version:
     description: 'Python version used to run the brimyr CLI.'
     required: false
@@ -119,6 +132,31 @@ runs:
     - name: Install brimyr
       shell: bash
       run: python -m pip install --disable-pip-version-check --quiet "$GITHUB_ACTION_PATH"
+
+    # A uv project's test tools live in ITS virtualenv, never on PATH, so brimyr runs
+    # them as `uv run pytest ...` (see detect.resolve_command). That needs uv on the
+    # runner: nothing else here installs the repo's own dependencies, and without this
+    # step the uv-aware command trades `pytest: not found` for `uv: not found`.
+    #
+    # Gated on the same signal detect.py keys on — `uv.lock` — so the two cannot
+    # disagree about whether this is a uv repo. Skipped entirely for everyone else, so
+    # a JS/.NET/plain-pip consumer pays nothing.
+    - name: Set up uv
+      if: ${{ hashFiles('uv.lock') != '' }}
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        # Match the interpreter "Set up Python" just selected, so `uv run` reuses it
+        # instead of downloading a second one.
+        python-version: ${{ inputs.python_version }}
+
+    # Passed through the environment rather than interpolated into the script: an
+    # input spliced straight into `run:` can terminate the surrounding shell syntax.
+    - name: Setup
+      if: ${{ inputs.setup != '' }}
+      shell: bash
+      env:
+        BRIMYR_SETUP: ${{ inputs.setup }}
+      run: bash -c "$BRIMYR_SETUP"
 
     - name: Brimyr gate
       id: brimyr

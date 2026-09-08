@@ -1,9 +1,16 @@
 # Setup & usage
 
 Brimyr runs your tests **on the runner**, so the test toolchain and dependencies
-must be present before the gate runs. Install them in a `setup` step (reusable
-workflow) or your own steps (composite action) — or skip the run entirely by
-feeding a pre-made coverage report via `coverage_file`.
+must be present before the gate runs. Install them with the `setup` input (on the
+reusable workflow *or* the composite action) or your own steps — or skip the run
+entirely by feeding a pre-made coverage report via `coverage_file`.
+
+**uv projects need none of that.** A repo with a `uv.lock` is detected as
+uv-managed and its tests run as `uv run pytest …`, which syncs the environment
+itself; Brimyr installs uv for you. This is not a nicety: a uv project's `pytest`
+lives in the project virtualenv and is *never* on `PATH`, so a bare `pytest` is
+"command not found" no matter how correctly the project declares its dev
+dependencies.
 
 ## 1. Reusable workflow (recommended)
 

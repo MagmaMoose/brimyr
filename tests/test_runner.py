@@ -69,3 +69,38 @@ def test_ingest_bad_xml_raises(tmp_path):
     bad.write_text("<not-closed>")
     with pytest.raises(IngestError):
         ingest_file(bad, CoverageFormat.COBERTURA)
+
+
+def test_run_one_enters_a_uv_projects_environment(tmp_path):
+    """The detected command is resolved against the repo, not used verbatim.
+
+    Hooked in the runner rather than in detection so a `--ecosystem`-forced run gets
+    it too — that path bypasses detect_ecosystems() entirely.
+    """
+    from brimyr.detect import ecosystem
+    from brimyr.runner import run_one
+
+    (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def fake(cmd: str, cwd: str) -> subprocess.CompletedProcess:
+        seen.append(cmd)
+        return subprocess.CompletedProcess([], 0)
+
+    run_one(ecosystem("python"), tmp_path, runner=fake)
+    assert seen == ["uv run pytest --cov --cov-report=xml --cov-report=term-missing"]
+
+
+def test_an_explicit_command_still_wins_over_the_uv_prefix(tmp_path):
+    from brimyr.detect import ecosystem
+    from brimyr.runner import run_one
+
+    (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def fake(cmd: str, cwd: str) -> subprocess.CompletedProcess:
+        seen.append(cmd)
+        return subprocess.CompletedProcess([], 0)
+
+    run_one(ecosystem("python"), tmp_path, command="make test", runner=fake)
+    assert seen == ["make test"]
