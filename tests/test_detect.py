@@ -241,6 +241,69 @@ def test_a_test_file_below_the_root_is_signal(tmp_path):
     assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
 
 
+# --------------- ...but a NESTED PROJECT's tests are not this repo's ---------------
+# One level deeper than the guard above. `broker/tests/` under a repo whose root is not
+# a python project belongs to `broker`, whose dependencies live in ITS environment —
+# pytest at the root collects those files and dies importing them, which is the empty
+# report the broken-run rule turns red. Diatreme is the live case: bash + TypeScript,
+# a root pyproject.toml holding nothing but [tool.semantic_release], all its python
+# under broker/. Recursion is kept; only ownership is checked.
+
+
+def _nested_project(tmp_path, directory: str = "broker", marker: str = "pyproject.toml"):
+    (tmp_path / "pyproject.toml").write_text("[tool.semantic_release]\nversion = '1.0.0'\n")
+    nested = tmp_path / directory
+    (nested / "tests").mkdir(parents=True)
+    (nested / marker).write_text("[project]\nname = 'broker'\n")
+    (nested / "tests" / "test_token.py").write_text("def test_x(): pass\n")
+    return tmp_path
+
+
+def test_a_nested_projects_suite_is_not_this_repos_signal(tmp_path):
+    assert detect_ecosystems(_nested_project(tmp_path)) == []
+
+
+@pytest.mark.parametrize("marker", ["pyproject.toml", "setup.py", "setup.cfg"])
+def test_any_project_marker_makes_a_subdirectory_its_own_project(tmp_path, marker):
+    assert detect_ecosystems(_nested_project(tmp_path, marker=marker)) == []
+
+
+def test_the_roots_own_marker_is_not_treated_as_nested(tmp_path):
+    # Every python repo has a root marker; it is what makes these tests the root
+    # project's in the first place. Counting it as "nested" would detect nothing, ever.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'app'\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_app.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+def test_a_src_layout_with_root_tests_still_detects(tmp_path):
+    # The layout the fix must not break: package under src/, suite at the root.
+    (tmp_path / "requirements.txt").write_text("attrs\n")
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "app" / "__init__.py").write_text("")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_app.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+def test_the_roots_own_suite_wins_over_a_nested_project(tmp_path):
+    # A repo that has both (chargate: tests/ at the root, plus a broker/ deployable)
+    # is a python repo — the nested project only stops being *evidence*, it is not a veto.
+    _nested_project(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_cli.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+def test_an_explicit_root_pytest_config_beats_the_ownership_check(tmp_path):
+    # A repo that configures testpaths has SAID pytest runs from the root, whatever
+    # the layout. The config short-circuit is checked first and must stay that way.
+    _nested_project(tmp_path)
+    (tmp_path / "pytest.ini").write_text("[pytest]\ntestpaths = broker/tests\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
 def test_the_trailing_suffix_form_counts_too(tmp_path):
     (tmp_path / "setup.py").write_text("from setuptools import setup\n")
     (tmp_path / "thing_test.py").write_text("def test_x(): pass\n")

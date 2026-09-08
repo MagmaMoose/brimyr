@@ -105,6 +105,10 @@ _VENDOR_DIRS = frozenset(
 #: Where a pytest configuration lives, and the section that makes it one. `tox.ini` and
 #: `setup.cfg` are also bare python MARKERS, so their presence alone proves nothing; the
 #: section inside is the signal.
+# A directory carrying one of these is a Python project in its own right. Used to tell
+# "this repo's tests" from "a nested deployable's tests" — see _owned_by_root.
+_PYTHON_PROJECT_MARKERS: tuple[str, ...] = ("pyproject.toml", "setup.py", "setup.cfg")
+
 _PYTEST_CONFIG_SECTIONS: tuple[tuple[str, str], ...] = (
     ("pyproject.toml", "[tool.pytest.ini_options]"),
     ("pytest.ini", "[pytest]"),
@@ -127,6 +131,17 @@ def _python_has_test_signal(root: Path) -> bool:
     Exactly the reasoning behind :func:`_js_has_test_signal` and :func:`_java_is_maven`;
     python was simply the one marker set that never got the guard. Bypassed by an
     explicit ``--ecosystem python``, which is the escape hatch for a layout this misses.
+
+    The file fallback only counts tests belonging to the ROOT project. A nested
+    deployable with its own ``pyproject.toml`` (``broker/tests/``) is a different
+    project whose dependencies are not in this environment, so `pytest` at the root
+    collects those files and dies importing them. Diatreme is the live case: bash and
+    TypeScript, a root ``pyproject.toml`` holding nothing but ``[tool.semantic_release]``,
+    and its only Python under ``broker/``. Recursion itself is kept — a ``src/`` layout
+    with ``tests/`` at the root, or tests beside the code, must still be found.
+
+    An explicit root pytest config still wins outright and is checked first: a repo that
+    configures ``testpaths`` has *said* pytest runs from the root, whatever the layout.
     """
     for name, section in _PYTEST_CONFIG_SECTIONS:
         try:
@@ -134,19 +149,52 @@ def _python_has_test_signal(root: Path) -> bool:
                 return True
         except OSError:
             continue
-    return _has_test_file(root, ("test_*.py", "*_test.py"))
+    return _has_test_file(
+        root, ("test_*.py", "*_test.py"), nested_project_markers=_PYTHON_PROJECT_MARKERS
+    )
 
 
-def _has_test_file(root: Path, patterns: tuple[str, ...]) -> bool:
+def _owned_by_root(root: Path, match: Path, markers: tuple[str, ...]) -> bool:
+    """True if no NESTED project of its own sits between ``root`` and ``match``.
+
+    A test file under a directory that declares its own ``pyproject.toml`` belongs to
+    that project, not this one. Its dependencies live in that project's environment,
+    which the root's does not have, so `pytest` at the root collects it and then dies
+    importing it — the empty report the broken-run rule turns red.
+
+    Note the root's OWN marker is skipped, not treated as nested: every Python repo
+    has one, and it is what makes these the root project's tests in the first place.
+    """
+    for parent in match.relative_to(root).parents:
+        if parent == Path("."):
+            continue
+        if any((root / parent / marker).is_file() for marker in markers):
+            return False
+    return True
+
+
+def _has_test_file(
+    root: Path,
+    patterns: tuple[str, ...],
+    *,
+    nested_project_markers: tuple[str, ...] = (),
+) -> bool:
     """True as soon as ONE non-vendored file matches, without walking the rest.
 
     Short-circuits, so the common case (a repo that has tests) is cheap; only a repo
     with none pays for the full walk, and that is the answer we need to be sure of.
+
+    ``nested_project_markers`` additionally requires a match to belong to the ROOT
+    project — see :func:`_owned_by_root`. Off by default so this stays a plain
+    "is there a test file" question for any other caller.
     """
     for pattern in patterns:
         for match in root.glob(f"**/{pattern}"):
-            if _VENDOR_DIRS.isdisjoint(match.relative_to(root).parts):
-                return True
+            if not _VENDOR_DIRS.isdisjoint(match.relative_to(root).parts):
+                continue
+            if nested_project_markers and not _owned_by_root(root, match, nested_project_markers):
+                continue
+            return True
     return False
 
 
