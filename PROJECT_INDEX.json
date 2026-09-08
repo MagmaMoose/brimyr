@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-07",
+  "generated": "2026-09-08",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -147,9 +147,21 @@
       ],
       "depends_on": []
     },
+    "provision": {
+      "path": "src/brimyr/provision.py",
+      "purpose": "Answers the question detect.py does not: can this suite actually be LAUNCHED here? plan() reads the repo's dependency-manager shape and returns a Provision -- setup commands to run before the tests (npm ci) and/or a replacement test command that wraps the detected one in the repo's own manager (uv run --with pytest-cov, poetry run). uv is preferred because it installs the project, its PEP 735 dev group and a test-only package brimyr needs but the repo never declares, in one command, from uv.lock; poetry gets a branch only for the pre-2.0 layout with no [project] table, which uv reads as having no dependencies. Maven and .NET restore themselves and plan to nothing. Conservative by design: no project shape, or no tool on PATH, returns an EMPTY plan plus a note saying why -- declining silently is what made the original `pytest: not found` red gate invisible. Reads the filesystem and injects `which`; runs nothing (runner.py owns the subprocess boundary).",
+      "exports": [
+        "plan",
+        "Provision",
+        "Which"
+      ],
+      "depends_on": [
+        "detect"
+      ]
+    },
     "runner": {
       "path": "src/brimyr/runner.py",
-      "purpose": "Runs each detected ecosystem's tests with coverage, locates and ingests the report. Encodes the broken-run rule: a launch failure, a missing report, or an unparseable one becomes RunOutcome.error and RunResult.broken \u2014 never a 0% score. Injectable Runner for tests. run_command is a separate non-coverage helper for commands that must run (e.g. the SonarScanner-for-.NET build between begin/end) but never produce coverage; its failure never affects the gate.",
+      "purpose": "The test-runner boundary and the BROKEN-RUN rule. run_one runs provision.plan's setup commands first, then the (possibly wrapped) test command, locates every emitted report and parses each into a CoverageReport. A failed dependency install, a non-zero test exit, a timeout (124), an unparseable report or a report naming zero files is a tool error -- exit 2, build red -- never 0% patch coverage. A shell 127 is reported as `the test command did not run ... command not found`, carrying the reason provisioning declined, NOT as a coverage question. RunOutcome.ok also requires bool(report): a report that parses but names no files means the coverage tool instrumented nothing, which would otherwise yield a vacuous 100%. Provisioning is skipped when the caller supplied an explicit command (--test-command) or --no-provision. Injectable Runner (and `which`) for tests. run_command is a separate non-coverage helper for commands that must run (e.g. the SonarScanner-for-.NET build between begin/end) but never produce coverage; its failure never affects the gate.",
       "exports": [
         "run_tests",
         "run_one",
@@ -166,7 +178,8 @@
         "coverage.jacoco",
         "coverage.lcov",
         "coverage.model",
-        "detect"
+        "detect",
+        "provision"
       ]
     },
     "sonar": {
@@ -232,7 +245,7 @@
     },
     "gate": {
       "path": "src/brimyr/gate.py",
-      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, the vacuous pass when nothing coverable changed, and no_ecosystem — a repo with no test suite, which passes and is rendered as `skipped` rather than as a 100% table. GateDecision carries an optional TotalCoverage that nothing gates on.",
+      "purpose": "Turns a PatchCoverage plus a threshold into a GateDecision and the process exit code. Handles broken runs (exit 2), report-only baseline mode, the vacuous pass when nothing coverable changed, and no_ecosystem \u2014 a repo with no test suite, which passes and is rendered as `skipped` rather than as a 100% table. GateDecision carries an optional TotalCoverage that nothing gates on.",
       "exports": [
         "decide_gate",
         "GateDecision",

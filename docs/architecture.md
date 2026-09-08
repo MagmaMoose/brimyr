@@ -23,6 +23,7 @@ src/brimyr/
                   #   + compute_total_coverage: the reported, never-gated total
   git.py          # the ONLY git/subprocess boundary (merge-base, diff, shallow detect)
   detect.py       # ecosystem markers -> Ecosystem (test command + coverage format)
+  provision.py    # repo shape -> how to install its deps, so the suite can be LAUNCHED
   runner.py       # run tests with coverage, locate + ingest the file (broken-run rule)
   sonar.py        # sonar-scanner runner (failure-isolated, never raises)
   sonar_dotnet.py # dotnet sonarscanner begin/end WRAPPING the build (.NET only)
@@ -59,27 +60,32 @@ injected so the tests need no network, and neither ever raises out into the gate
    `GITHUB_EVENT_NAME` or an explicit flag.
 2. **`detect.detect_ecosystems`** sniffs marker files → the ecosystem(s) and their
    test commands (or the escape hatch / forced ecosystem is used instead).
-3. **`runner.run_tests`** runs each ecosystem's command with coverage on, locates
-   the emitted file, and parses it (`coverage.lcov` / `coverage.cobertura`) into a
-   `CoverageReport`. A failed/empty run sets `RunResult.broken`.
-4. **`git.compute_changed_lines`** resolves `merge-base(base, head)`, runs
+3. **`provision.plan`** reads the same tree for a dependency manager it can use, and
+   returns a setup command (`npm ci`), a wrapped test command (`uv run …`), or an
+   empty plan and a reason. Detecting a suite that then cannot be launched is worth
+   nothing, and that is a red gate on a repo whose tests are fine.
+4. **`runner.run_tests`** runs the plan's setup, then each ecosystem's command with
+   coverage on, locates the emitted file, and parses it (`coverage.lcov` /
+   `coverage.cobertura`) into a `CoverageReport`. A failed setup, a failed run or an
+   empty one sets `RunResult.broken`.
+5. **`git.compute_changed_lines`** resolves `merge-base(base, head)`, runs
    `git diff --unified=0`, and hands the text to `coverage.diff.parse_unified_diff`
    → a `DiffIndex`.
-5. **`coverage.patch.compute_patch_coverage`** intersects the diff with the report
+6. **`coverage.patch.compute_patch_coverage`** intersects the diff with the report
    → a `PatchCoverage` (covered / total changed-executable lines, per-file misses).
-6. **`gate.decide_gate`** applies the threshold (and the broken-run rule) → a
+7. **`gate.decide_gate`** applies the threshold (and the broken-run rule) → a
    `GateDecision` and exit code.
-7. **`sonar.run_scanner`** (optional) ships quality + coverage to SonarQube. It is
+8. **`sonar.run_scanner`** (optional) ships quality + coverage to SonarQube. It is
    failure-isolated: it never raises, so a Sonar outage can't fail the gate.
-8. **`quality.decide_quality_gate`** (optional) decides the net-new half on `fail_on`,
+9. **`quality.decide_quality_gate`** (optional) decides the net-new half on `fail_on`,
    over the counts `cli` read and `quality.parse_counts` validated out of the JSON the
    nested Chargate step left behind, or, told the scan never completed,
    `quality.broken_decision` reads nothing and reports a tool error. Same `Mode.gates`
    flag as coverage, so baseline gates neither.
-9. **`report`** writes the GitHub job summary and step outputs, `render_summary`'s
+10. **`report`** writes the GitHub job summary and step outputs, `render_summary`'s
    coverage block, with `render_quality_summary`'s net-new block appended when that
    half ran.
-10. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
+11. **`github_comment.post_pr_comment`** (optional) puts that same rendered summary
     on the PR as a single marker-owned comment, creating it once, then `PATCH`ing it
     on every later push. When `token_broker_url` is set,
     **`broker_client.mint_bot_token`** first exchanges the job's Actions OIDC token

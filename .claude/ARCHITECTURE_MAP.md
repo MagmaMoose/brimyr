@@ -17,7 +17,10 @@ reaches it directly; `_run_flow` folds it into the same summary, comment and exi
 coverage when `--quality-counts` **or** `--quality-scan-broken` is given.
 
 Edges inject their runner, so they test without a real toolchain: `git.py` (the only git
-boundary), `runner.py` (run tests, ingest). `sonar.py`, `sonar_dotnet.py`,
+boundary), `runner.py` (run tests, ingest). `provision.py` sits in front of `runner.py`
+and answers the question detection does not — can this suite actually be *launched* here
+— returning a setup command and/or a dependency-manager-wrapped test command; it reads
+the filesystem and injects `which`, and runs nothing itself. `sonar.py`, `sonar_dotnet.py`,
 `html_report.py`, `github_comment.py` and `broker_client.py` are all **failure-isolated
 — they never fail the gate**. Then `detect.py` (markers → `Ecosystem`), `gate.py`
 (percentage → verdict), `modes.py` (PR vs baseline), `report.py`, `local.py`.

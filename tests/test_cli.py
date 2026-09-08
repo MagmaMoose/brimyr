@@ -847,3 +847,36 @@ def test_ci_a_repo_that_does_have_tests_is_still_gated(repo, tmp_path):
         ]
     )
     assert code == 1
+
+
+def test_ci_reports_which_environment_the_number_came_from(repo, tmp_path, capsys, monkeypatch):
+    """A provisioned run and a bare one can report the same percentage from different code.
+
+    So the note goes on stderr beside the coverage line, whether provisioning acted or
+    declined — and when it declined, the reason is what makes an unrunnable suite
+    diagnosable at all instead of a mystifying `pytest: not found`.
+    """
+    from brimyr import cli as cli_mod
+    from brimyr.coverage.model import CoverageBuilder
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome, RunResult
+
+    builder = CoverageBuilder()
+    builder.record("a.py", 4, 1)
+    builder.record("a.py", 5, 1)
+    outcome = RunOutcome(
+        ecosystem("python"),
+        0,
+        (),
+        builder.build(),
+        provision_note="`uv` is not on PATH — running tests as-is",
+    )
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((outcome,)))
+
+    repo_dir, base = repo
+    code = main(
+        ["ci", "--mode", "pr", "--ecosystem", "python", "--base", base, "--repo", str(repo_dir)]
+    )
+
+    assert code == 0
+    assert "Python: `uv` is not on PATH" in capsys.readouterr().err

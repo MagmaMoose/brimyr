@@ -5,6 +5,13 @@ This is the test-runner boundary — the one place that shells out to ``pytest``
 coverage instrumentation already on (coverage is a *byproduct of the run*), then
 its emitted file is located and parsed into a pure :class:`CoverageReport`.
 
+Before the tests, :mod:`brimyr.provision` gets a chance to make them *runnable* —
+``uv run`` / ``poetry run`` / ``npm ci``. Detecting a suite Brimyr then cannot
+launch is worth nothing to the consumer: it produced ``pytest: not found``, an
+empty report and a red gate on a repo whose tests were fine. Provisioning is
+skipped entirely when the caller supplied an explicit ``command``, which is their
+contract to keep.
+
 The crucial rule lives here: a test command that exits non-zero, or that produces
 no parseable coverage, is a **broken run** — a tool error (build red), never
 "0% patch coverage". :attr:`RunResult.broken` surfaces that so the CLI fails with
@@ -17,6 +24,7 @@ without a real toolchain.
 from __future__ import annotations
 
 import functools
+import shutil
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -27,6 +35,8 @@ from brimyr.coverage.jacoco import JacocoError, parse_jacoco
 from brimyr.coverage.lcov import parse_lcov
 from brimyr.coverage.model import CoverageReport, merge_reports
 from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_files
+from brimyr.provision import Provision, Which
+from brimyr.provision import plan as plan_provision
 
 # A runner takes (command_string, cwd) and returns the completed process.
 Runner = Callable[[str, str], subprocess.CompletedProcess]
@@ -157,6 +167,9 @@ class RunOutcome:
     coverage_paths: tuple[Path, ...]
     report: CoverageReport | None
     error: str | None = None
+    #: What provisioning did, or why it did nothing. Diagnostic only — but it is the
+    #: line that says whose environment the number was measured in.
+    provision_note: str = ""
 
     @property
     def coverage_path(self) -> Path | None:
@@ -235,6 +248,12 @@ def run_command(
     return CommandOutcome(command=argv, returncode=completed.returncode)
 
 
+#: A shell's exit status when the command it was told to run does not exist. The
+#: difference between "your tests failed" and "nothing installed your test runner" is
+#: the whole diagnosis, and it is the only thing separating them in the exit status.
+_NOT_FOUND = 127
+
+
 def run_one(
     eco: Ecosystem,
     repo: str | Path = ".",
@@ -242,13 +261,51 @@ def run_one(
     command: str | None = None,
     runner: Runner | None = None,
     timeout: float | None = DEFAULT_TEST_TIMEOUT,
+    provision: bool = True,
+    which: Which = shutil.which,
 ) -> RunOutcome:
-    """Run a single ecosystem's tests and ingest its coverage file."""
+    """Run a single ecosystem's tests and ingest its coverage file.
+
+    Unless ``provision`` is off or ``command`` is given, the repo's own dependency
+    manager is used to install what the run needs first — see :mod:`brimyr.provision`.
+    """
     # Bound to the DEFAULT runner only: `Runner` is a two-argument contract and every
     # injected test runner implements it, so widening it here would break them all.
     run_fn = runner or functools.partial(_default_runner, timeout=timeout)
     repo_str = str(repo)
-    cmd = command or eco.command_str()
+
+    # An explicit `command` is the caller's own contract: they said how to run the
+    # tests, so wrapping it in a dependency manager they did not ask for would change
+    # what they asked to run. Their setup is theirs to do.
+    prov = plan_provision(eco, repo, which=which) if provision and command is None else Provision()
+    cmd = command or prov.command or eco.command_str()
+
+    for setup_cmd in prov.setup:
+        try:
+            setup = run_fn(setup_cmd, repo_str)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return RunOutcome(
+                eco,
+                _NOT_FOUND,
+                (),
+                None,
+                error=f"`{setup_cmd}` could not run: {exc}",
+                provision_note=prov.note,
+            )
+        if setup.returncode != 0:
+            # Not "0% coverage" and not a test failure: the dependencies never got
+            # installed, so whatever the suite would have done next is meaningless.
+            return RunOutcome(
+                eco,
+                setup.returncode,
+                (),
+                None,
+                error=(
+                    f"dependency install failed (`{setup_cmd}` exited "
+                    f"{setup.returncode}). The tests were not run."
+                ),
+                provision_note=prov.note,
+            )
 
     try:
         completed = run_fn(cmd, repo_str)
@@ -265,12 +322,38 @@ def run_one(
                 "broken run, not 0% coverage. Raise `test_timeout` if the suite is "
                 "genuinely this slow, or set it to 0 to wait indefinitely."
             ),
+            provision_note=prov.note,
         )
     except OSError as exc:
-        return RunOutcome(eco, 127, (), None, error=f"could not launch tests: {exc}")
+        return RunOutcome(
+            eco,
+            _NOT_FOUND,
+            (),
+            None,
+            error=f"could not launch tests: {exc}",
+            provision_note=prov.note,
+        )
 
     coverage_files = locate_coverage_files(eco, repo)
     if not coverage_files:
+        # 127 means the shell never found the binary, so "did the test run emit
+        # coverage?" is the wrong question and sent everyone looking at their coverage
+        # config. Nothing ran. Say that, and say what would have made it run — the
+        # note carries why provisioning declined, which is the actual fix.
+        if completed.returncode == _NOT_FOUND:
+            because = f" ({prov.note})" if prov.note else ""
+            return RunOutcome(
+                eco,
+                _NOT_FOUND,
+                (),
+                None,
+                error=(
+                    f"the test command did not run: `{cmd}` — command not found{because}. "
+                    "Nothing was measured. Install the test toolchain in the job, or set "
+                    "`test_command` / `coverage_file`."
+                ),
+                provision_note=prov.note,
+            )
         return RunOutcome(
             eco,
             completed.returncode,
@@ -280,6 +363,7 @@ def run_one(
                 f"no coverage file found (expected one of: {', '.join(eco.coverage_paths)}). "
                 "Did the test run emit coverage?"
             ),
+            provision_note=prov.note,
         )
 
     # ALL of them, merged. A solution with several test projects leaves one report per
@@ -294,9 +378,13 @@ def run_one(
             reports.append(ingest_file(path, eco.coverage_format, repo))
         except IngestError as exc:
             # One unparseable report is a broken run, not a quietly smaller number.
-            return RunOutcome(eco, completed.returncode, paths, None, error=str(exc))
+            return RunOutcome(
+                eco, completed.returncode, paths, None, error=str(exc), provision_note=prov.note
+            )
 
-    return RunOutcome(eco, completed.returncode, paths, merge_reports(reports))
+    return RunOutcome(
+        eco, completed.returncode, paths, merge_reports(reports), provision_note=prov.note
+    )
 
 
 def run_tests(
@@ -306,9 +394,20 @@ def run_tests(
     command: str | None = None,
     runner: Runner | None = None,
     timeout: float | None = DEFAULT_TEST_TIMEOUT,
+    provision: bool = True,
+    which: Which = shutil.which,
 ) -> RunResult:
     """Run each ecosystem's tests and ingest coverage. ``command`` overrides all."""
     outcomes = [
-        run_one(eco, repo, command=command, runner=runner, timeout=timeout) for eco in ecosystems
+        run_one(
+            eco,
+            repo,
+            command=command,
+            runner=runner,
+            timeout=timeout,
+            provision=provision,
+            which=which,
+        )
+        for eco in ecosystems
     ]
     return RunResult(tuple(outcomes))

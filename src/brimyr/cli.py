@@ -621,11 +621,17 @@ def _collect_coverage(
         args.repo,
         command=args.test_command or None,
         timeout=getattr(args, "test_timeout", DEFAULT_TEST_TIMEOUT),
+        provision=getattr(args, "provision", True),
     )
     sonar_paths: dict[str, tuple[str, ...]] = {}
     coverage_paths: list[str] = []
     for outcome in result.outcomes:
         coverage_paths.extend(str(path) for path in outcome.coverage_paths)
+        if outcome.provision_note:
+            # Which environment the number was measured in is not a detail. A run that
+            # silently fell back to the ambient interpreter and one that synced the
+            # repo's own lockfile can report the same percentage from different code.
+            _eprint(f"brimyr: {outcome.ecosystem.label}: {outcome.provision_note}")
         prop = outcome.ecosystem.sonar_property
         if prop and outcome.coverage_paths:
             # EVERY report, not one. sonar.*.reportPaths is a comma-separated list, and a
@@ -1049,6 +1055,17 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
         help=(
             f"Kill the test run after N seconds (default: {DEFAULT_TEST_TIMEOUT}). A "
             "timeout is a broken run (exit 2), never 0% coverage. 0 waits forever."
+        ),
+    )
+    parser.add_argument(
+        "--no-provision",
+        dest="provision",
+        action="store_false",
+        default=True,
+        help=(
+            "Do not install the repo's test dependencies first. By default brimyr uses "
+            "the repo's own dependency manager (uv / poetry / npm) so a detected suite "
+            "can actually be launched; pass this if the job installs them itself."
         ),
     )
     parser.add_argument(
