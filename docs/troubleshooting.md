@@ -111,14 +111,14 @@ purpose. Detection needs one of:
 
   "Belonging to this project" means no nested project sits between the repo root and
   the test file. A subdirectory with its own `pyproject.toml` / `setup.py` /
-  `setup.cfg` — a separate deployable such as `broker/` — is a different project whose
+  `setup.cfg` (a separate deployable such as `broker/`) is a different project whose
   dependencies are not in this environment, so `pytest` at the root would collect its
   files and then fail importing them. Depth alone is fine: `backend/tests/test_api.py`
   with no `backend/pyproject.toml` is still this repo's suite.
 
   If your tests really do live in a nested project and you want them gated from the
-  root, add a root pytest section pointing at them (`testpaths`) — an explicit config
-  wins outright — or set `ecosystem:` plus a `test_command:` that enters the directory.
+  root, add a root pytest section pointing at them (`testpaths`): an explicit config
+  wins outright. Or set `ecosystem:` plus a `test_command:` that enters the directory.
 - `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
 - `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
 - `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
