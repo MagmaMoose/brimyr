@@ -95,6 +95,71 @@ def test_poetry_that_already_declares_pytest_cov_is_left_alone(tmp_path):
     )
 
 
+def test_a_comment_mentioning_pytest_cov_does_not_suppress_the_inject(tmp_path):
+    """The check is a TOML table lookup, not a substring scan over the file.
+
+    A grep reads this comment as a declared dependency and skips the install the
+    comment is literally asking for, and `poetry run pytest --cov` then dies on
+    `unrecognized arguments` — the broken run this module exists to prevent.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry]\nname = 'x'\n"
+        "[tool.poetry.dependencies]\n"
+        "# note: pytest-cov is needed before --cov will work\n"
+        "requests = '*'\n"
+    )
+
+    setup = plan(PY, tmp_path, which=_has("poetry")).setup
+
+    assert len(setup) == 2
+    assert "pytest-cov" in setup[1]
+
+
+def test_pytest_cov_in_the_main_dependency_table_counts(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry]\nname = 'x'\n[tool.poetry.dependencies]\npytest-cov = '^5'\n"
+    )
+
+    assert len(plan(PY, tmp_path, which=_has("poetry")).setup) == 1
+
+
+def test_the_legacy_dev_dependencies_table_counts_too(tmp_path):
+    """Poetry moved the goalposts twice; `dev-dependencies` predates groups."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry]\nname = 'x'\n[tool.poetry.dev-dependencies]\npytest-cov = '*'\n"
+    )
+
+    assert len(plan(PY, tmp_path, which=_has("poetry")).setup) == 1
+
+
+def test_a_scalar_tool_poetry_falls_back_to_injecting(tmp_path):
+    """Valid TOML, nonsense shape. Injecting is the safe answer; raising is not."""
+    (tmp_path / "pyproject.toml").write_text("[tool]\npoetry = 'yes'\n")
+
+    setup = plan(PY, tmp_path, which=_has("poetry")).setup
+
+    assert len(setup) == 2
+    assert "pytest-cov" in setup[1]
+
+
+def test_an_unparseable_pyproject_degrades_instead_of_raising(tmp_path):
+    """A pyproject brimyr cannot read is the repo's bug, not a reason to crash its gate."""
+    (tmp_path / "pyproject.toml").write_text("[project\nthis is not toml")
+
+    result = plan(PY, tmp_path, which=_has("uv", "poetry"))
+
+    assert result.setup == ()
+    assert result.command is None
+
+
+def test_an_unparseable_pyproject_still_uses_a_uv_lock(tmp_path):
+    """The lockfile is its own evidence of a uv project; the broken table is not needed."""
+    (tmp_path / "pyproject.toml").write_text("[project\nthis is not toml")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+
+    assert plan(PY, tmp_path, which=_has("uv")).command.startswith("uv run")
+
+
 def test_a_poetry_repo_without_poetry_declines_and_names_the_tool(tmp_path):
     """Never fall through to uv here: it reads a 1.x layout as having no dependencies."""
     (tmp_path / "pyproject.toml").write_text("[tool.poetry]\nname = 'x'\n")
