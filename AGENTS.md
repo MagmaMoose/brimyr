@@ -9,8 +9,10 @@ the job exits on the worse of the two. Chargate is the *security* sibling — th
 the subject, not the tool. One CLI, two surfaces: `action.yml` and
 `.pre-commit-hooks.yaml`.
 
-1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), runs its
-   tests **with coverage on**, and gates a PR **only on the lines the diff changed**
+1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), installs
+   its dependencies through the repo's own manager (`provision.py`: `uv run` /
+   `poetry run` / `npm ci`, so a fleet-provisioned workflow needs no setup step), runs
+   its tests **with coverage on**, and gates a PR **only on the lines the diff changed**
    (diff-cover semantics, default 80%). Pre-existing uncovered code never blocks.
    Non-blocking alongside: total coverage, and a SonarQube analysis when `sonar_url` and
    `sonar_token` are both set and `sonar-scanner` is on PATH (`run_scanner` returns a
@@ -63,8 +65,11 @@ exit `2`, never 0% coverage. Check the denominator before believing a good resul
 ## Context files
 
 - `./PROJECT_INDEX.json` — locating unfamiliar code. Read by path, never imported.
-- `.claude/COMMON_MISTAKES.md` — always-applicable footguns.
-- `.claude/SUBSYSTEMS.md` — Sonar, `broker/`, cost, the quality half, CI gates, the
-  shared diff corpus. Read before touching any of them.
+- `.claude/COMMON_MISTAKES.md` — always-applicable footguns. Deliberately short: it is
+  auto-loaded into every session, so area-scoped detail belongs in `SUBSYSTEMS.md`.
+- `.claude/SUBSYSTEMS.md` — ecosystem detection, coverage formats and report merging,
+  dependency provisioning, Sonar, `broker/`, cost, CI gates, the shared diff corpus.
+  Read the section before touching any of them; most of the silent-pass bugs above have
+  their full story there.
 - `.claude/ARCHITECTURE_MAP.md` — the pure-core/edges shape.
 - `./docs` is published human documentation; `.claude/*.md` is terse agent context.
