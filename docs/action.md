@@ -35,8 +35,34 @@ code, which is the worse of the two.
 | --- | --- | --- | --- |
 | `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, comma-separated. |
 | `test_command` | string | *(detected)* | Replace the detected test command with a shell command string. |
+| `provision` | bool | `true` | Install the repo's test dependencies first, with the repo's own dependency manager (`uv run` / `poetry run` / `npm ci`), so a detected suite can actually be launched. See [Dependency provisioning](#dependency-provisioning). Ignored when `test_command` is set. |
 | `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. **Globs are expanded**, which is how you name `dotnet test`'s per-project `TestResults/*/coverage.cobertura.xml`. A pattern matching nothing is an error, not an empty result. Format is sniffed when you leave it off. |
 | `test_timeout` | int | `3600` | Kill the test run after N seconds. A timeout is a **broken run** (exit 2), never 0% coverage. `0` waits indefinitely. |
+
+### Dependency provisioning
+
+Brimyr runs your tests on the runner, so something has to install them. By default
+Brimyr does it, using whatever the repo already declares:
+
+| Repo shape | What runs |
+| --- | --- |
+| `uv.lock`, or a `[project]` / `[tool.uv]` table | `uv run --with pytest-cov <test command>` |
+| `requirements*.txt` and nothing else | `uv run --with pytest-cov --with-requirements <file> <test command>` |
+| Poetry 1.x (`[tool.poetry]`, no `[project]`) | `poetry install`, then `poetry run <test command>` |
+| `package.json` with no `node_modules` | `npm ci` (falling back to `npm install`), then the detected command |
+| Maven, .NET | nothing — `mvn` and `dotnet test` restore their own |
+
+`pytest-cov` is injected because it is Brimyr's requirement, not yours: a repo can have
+a complete pytest setup and still fail `pytest --cov` on an unrecognised argument. It is
+added to the run, never to your lockfile.
+
+Nothing is installed into the job's own interpreter. Provisioning declines, and says why
+on stderr, whenever the repo shows no shape it can act on or the tool that owns it is
+missing — the run then proceeds exactly as before.
+
+Set `provision: 'false'` when the job installs dependencies itself. Setting
+`test_command` disables it too: an explicit command is your contract, so its setup is
+yours as well.
 
 ## PR comment
 

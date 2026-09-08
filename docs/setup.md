@@ -3,10 +3,16 @@
 <!-- sources: action.yml, .pre-commit-hooks.yaml -->
 
 Brimyr gates a pull request on two things: **patch coverage** (always) and **net-new
-quality findings** (opt-in). It runs your tests **on the runner**, so the test toolchain
-and dependencies must be present before the gate runs. Install them in a `setup` step (reusable
-workflow) or your own steps (composite action), or skip the run entirely by
-feeding a pre-made coverage report via `coverage_file`.
+quality findings** (opt-in). It runs your tests **on the runner**, and by default it
+installs their dependencies first using whatever your repo already declares — `uv run`,
+`poetry run`, `npm ci`. So the minimal wiring is the action on its own, with no setup
+step: that is what makes it provisionable fleet-wide.
+
+Install them yourself if you'd rather (a `setup` step in the reusable workflow, your own
+steps with the composite action) and set `provision: 'false'`, or skip the test run
+entirely by feeding a pre-made coverage report via `coverage_file`. The full table of
+what gets provisioned, and when it declines, is in the
+[Action reference](action.md#dependency-provisioning).
 
 ## 1. Composite action
 
@@ -26,14 +32,8 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      # Check out FIRST: the deps install below needs a populated workspace, so
-      # the action's own checkout would be too late.
-      - uses: actions/checkout@v6
-        with: { fetch-depth: 0 }
-      - run: pip install -e '.[test]'          # install your test deps first
       - uses: magmamoose/brimyr@v1
         with:
-          checkout: 'false'                     # already checked out above
           threshold: '80'
           pr_comment: 'true'
           # sonar_url: https://sonar.example.com
@@ -44,10 +44,10 @@ On pull requests it runs your tests with coverage, gates on patch coverage, and 
 to SonarQube when `sonar_url` is set. On a push to the default branch it runs a
 non-gating baseline that still feeds the trend.
 
-If Brimyr is your only step, drop both the checkout and `checkout: 'false'`: the action
-checks out with `fetch-depth: 0` by default, which is what patch coverage needs. Any
-step that touches the workspace first needs the explicit checkout, because the action's
-own would run too late.
+No checkout step: the action checks out with `fetch-depth: 0` by default, which is what
+patch coverage needs. Add your own `actions/checkout@v6` with `fetch-depth: 0` and set
+`checkout: 'false'` **only** if an earlier step in the job needs the workspace — the
+action's own checkout would run too late for it.
 
 Every input and output is in the [Action reference](action.md).
 

@@ -89,6 +89,17 @@ inputs:
     description: 'Override the detected test command (a shell command string).'
     required: false
     default: ''
+  provision:
+    description: >-
+      Install the repo's test dependencies before running its tests, using the repo's
+      own dependency manager (`uv run` / `poetry run` / `npm ci`). On by default,
+      because the alternative is that every repo consuming this action fleet-wide has
+      to hand-write a setup step: without one, a repo with a perfectly good pytest
+      suite gets `pytest: not found`, an empty report and a RED gate that says nothing
+      about its coverage. Set to 'false' when the job installs them itself. Ignored
+      when `test_command` is set — an explicit command is the caller's own contract.
+    required: false
+    default: 'true'
   coverage_file:
     description: 'Escape hatch: ingest pre-made coverage file(s) "path[:format]", comma-separated, instead of running tests.'
     required: false
@@ -291,6 +302,32 @@ runs:
         # every later step in their job, which is the side effect being removed.
         echo "bin=$venv/bin/brimyr" >> "$GITHUB_OUTPUT"
 
+    # Provisioning needs `uv` and the runner images do not ship one, so without this
+    # step the Python half of `provision.py` declines on every hosted runner and the
+    # `pytest: not found` red gate comes straight back. Installed into the SAME
+    # dedicated venv as brimyr, then exposed through a directory holding nothing but
+    # the one symlink — putting the venv's own bin on PATH would shadow the
+    # consumer's `python` and `pip` for their entire test run, which is the side
+    # effect the venv exists to avoid.
+    #
+    # Skipped outright when the runner already has uv, so the usual cost is zero and
+    # the worst case is one wheel.
+    - name: Provision uv
+      if: ${{ inputs.provision == 'true' && inputs.test_command == '' }}
+      shell: bash
+      env:
+        BRIMYR_VENV: ${{ runner.temp }}/brimyr-venv
+        BRIMYR_TOOLS: ${{ runner.temp }}/brimyr-tools
+      run: |
+        set -euo pipefail
+        if command -v uv >/dev/null 2>&1; then
+          echo "uv already on PATH: $(command -v uv)"
+          exit 0
+        fi
+        "$BRIMYR_VENV/bin/python" -m pip install --disable-pip-version-check --quiet uv
+        mkdir -p "$BRIMYR_TOOLS"
+        ln -sf "$BRIMYR_VENV/bin/uv" "$BRIMYR_TOOLS/uv"
+
     # Without this the Sonar leg is a silent no-op: nothing installs a scanner, so every
     # run reported "skipped (sonar-scanner not found on PATH)" while the build stayed
     # green. Only runs when a host URL is actually set, so the cost is zero otherwise.
@@ -473,6 +510,8 @@ runs:
         EXCLUDE_IN: ${{ inputs.exclude }}
         ECOSYSTEM_IN: ${{ inputs.ecosystem }}
         TEST_COMMAND_IN: ${{ inputs.test_command }}
+        PROVISION_IN: ${{ inputs.provision }}
+        BRIMYR_TOOLS: ${{ runner.temp }}/brimyr-tools
         COVERAGE_FILE_IN: ${{ inputs.coverage_file }}
         SONAR_URL_IN: ${{ inputs.sonar_url }}
         SONAR_PROJECT_KEY_IN: ${{ inputs.sonar_project_key }}
@@ -497,6 +536,10 @@ runs:
         TOKEN_BROKER_URL_IN: ${{ inputs.token_broker_url }}
       run: |
         set -euo pipefail
+        # APPENDED, never prepended: this directory holds brimyr's fallback `uv`, and a
+        # consumer who installed their own must keep winning — the tests that run under
+        # it are theirs, not ours.
+        [ -d "$BRIMYR_TOOLS" ] && export PATH="$PATH:$BRIMYR_TOOLS"
         json_rel="brimyr-reports/coverage.json"
         json_abs="${GITHUB_WORKSPACE:-$PWD}/$json_rel"
         mkdir -p "$(dirname "$json_abs")"
@@ -524,6 +567,7 @@ runs:
         [ "$HTML_REPORT_IN" = "true" ] && args+=(--html-report "$html_dir")
         [ -n "$base" ] && args+=(--base "$base")
         [ -n "$TEST_COMMAND_IN" ] && args+=(--test-command "$TEST_COMMAND_IN")
+        [ "$PROVISION_IN" = "true" ] || args+=(--no-provision)
 
         # Every comma-separated input below is trimmed. `exclude: "*Migrations*, *.Designer.cs"`
         # is the natural way to write a list in YAML, and untrimmed it yields the glob
