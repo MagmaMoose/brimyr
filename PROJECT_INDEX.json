@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-08",
+  "generated": "2026-09-09",
   "summary": "Brimyr is a patch-coverage gate. It detects a repo's ecosystem (Python / JS-TS / .NET), runs that ecosystem's test command with coverage on, and gates a PR only on the coverage of the lines the diff added \u2014 pre-existing uncovered code never blocks. A pure, stdlib-only core under src/brimyr/coverage/ does the arithmetic (diff parsing, report parsing, intersection); thin side-effecting edges (git.py, runner.py, sonar.py, github_comment.py, broker_client.py) shell out or hit the network and inject their runners. One `brimyr` CLI backs three surfaces: a composite action, a reusable workflow, and a pre-commit pre-push hook. It also posts ONE consolidated PR comment, optionally authored by Brimyr[bot] via the token broker in broker/ \u2014 a separate AWS Lambda deployable that nothing in src/brimyr imports. A second half gates net-new QUALITY findings: brimyr does not lint, it calls magmamoose/chargate (`chargate filter-sarif`) across a process boundary and gates on the counts JSON that comes back (quality.py, `brimyr lint`, and `brimyr ci --quality-counts` which folds the verdict into the one summary and the one PR comment). Report-only until fail_on says otherwise.",
   "entrypoints": [
     "src/brimyr/cli.py:main",
@@ -171,7 +171,8 @@
         "RunResult",
         "RunOutcome",
         "CommandOutcome",
-        "IngestError"
+        "IngestError",
+        "DEFAULT_TEST_TIMEOUT"
       ],
       "depends_on": [
         "coverage.cobertura",
@@ -252,7 +253,8 @@
         "DEFAULT_THRESHOLD",
         "EXIT_OK",
         "EXIT_BLOCKED",
-        "EXIT_ERROR"
+        "EXIT_ERROR",
+        "DEFAULT_MIN_LINES"
       ],
       "depends_on": [
         "coverage.patch"
@@ -281,7 +283,8 @@
         "SUPPORTED_COUNTS_SCHEMA_VERSIONS",
         "FAIL_ON_CHOICES",
         "DEFAULT_FAIL_ON",
-        "BAND_EQUIVALENT"
+        "BAND_EQUIVALENT",
+        "broken_decision"
       ],
       "depends_on": []
     },
