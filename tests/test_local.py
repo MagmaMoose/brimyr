@@ -55,3 +55,35 @@ def test_none_when_no_base(tmp_path):
     _git(tmp_path, "add", "f")
     _git(tmp_path, "commit", "-q", "-m", "c")
     assert resolve_local_base(tmp_path) is None
+
+
+def test_a_git_that_cannot_run_is_not_reported_as_a_missing_base_branch(monkeypatch, tmp_path):
+    """`None` means git ran and found no base branch. This is git never running.
+
+    Collapsing the second into the first produced "could not infer a base branch --
+    pass --base explicitly", which is advice that cannot help: passing a base does not
+    install git, and it does not create a directory that is not there.
+    """
+    import subprocess as sp
+
+    from brimyr.git import GitError
+
+    def no_git(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr(sp, "run", no_git)
+    with pytest.raises(GitError) as exc_info:
+        resolve_local_base(tmp_path)
+    assert "could not run" in str(exc_info.value)
+
+
+def test_an_explicit_base_never_shells_out(monkeypatch, tmp_path):
+    """The explicit branch returns before any subprocess, so a broken git must not stop
+    a developer who already said what to diff against."""
+    import subprocess as sp
+
+    def explode(*args, **kwargs):
+        raise AssertionError("resolve_local_base shelled out for an explicit base")
+
+    monkeypatch.setattr(sp, "run", explode)
+    assert resolve_local_base(tmp_path, "origin/main") == "origin/main"

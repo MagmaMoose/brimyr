@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from brimyr.cli import main
+from brimyr.gate import EXIT_BLOCKED, EXIT_ERROR
 
 
 def _git(repo, *args):
@@ -880,3 +881,178 @@ def test_ci_reports_which_environment_the_number_came_from(repo, tmp_path, capsy
 
     assert code == 0
     assert "Python: `uv` is not on PATH" in capsys.readouterr().err
+
+
+# ------------- a setup mistake is exit 2, never a coverage verdict -------------
+#
+# Exit 1 is this tool's word for "patch coverage below threshold" and exit 2 is
+# "broken run / setup error". Everything in this section is about a setup mistake that
+# used to arrive as one of the other two.
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["coverage", "--coverage-file", "cov.xml", "--base", "main"],
+        ["ci", "--mode", "pr", "--base", "main"],
+        ["ci", "--mode", "baseline"],
+        ["local"],
+    ],
+    ids=["coverage", "ci-pr", "ci-baseline", "local"],
+)
+def test_a_repo_path_that_does_not_exist_is_never_a_green_gate(argv, tmp_path, capsys):
+    """The traceback was not the worst of it.
+
+    `brimyr ci --repo /typo` found no marker files -- there is no directory to find them
+    in -- and reported the `no ecosystem detected` skip: exit 0, gate GREEN, on a path
+    that does not exist. A mistyped input laundered into "this repo has no tests" is the
+    vacuous pass the whole tool is built to refuse. `coverage` and `local` had the other
+    half of it: a raw FileNotFoundError traceback and exit 1, which CI reads as the pull
+    request's coverage being too low.
+    """
+    missing = tmp_path / "nope"
+    code = main([*argv, "--repo", str(missing)])
+
+    assert code == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "is not a directory" in err
+    assert "setup error" in err
+    assert "Traceback" not in err
+
+
+def test_a_repo_pointing_at_a_file_is_rejected_too(tmp_path, capsys):
+    """`is_dir`, not `exists`: a file fails identically everywhere `--repo` is used."""
+    target = tmp_path / "a-file"
+    target.write_text("")
+    assert main(["ci", "--mode", "baseline", "--repo", str(target)]) == EXIT_ERROR
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_the_default_repo_is_never_rejected(repo):
+    """Guards the guard. `--repo` defaults to `.`, so a check that could reject the
+    default would fail every run on the fleet rather than only the mistyped ones."""
+    repo_dir, _base = repo
+    monkey = pytest.MonkeyPatch()
+    monkey.chdir(repo_dir)
+    try:
+        assert main(["ci", "--mode", "baseline"]) == 0
+    finally:
+        monkey.undo()
+
+
+def test_local_reports_a_git_that_cannot_run_as_a_setup_error(tmp_path, capsys):
+    """The conversion happens in `cmd_local`, so the module-level test cannot see it.
+
+    `resolve_local_base` raising `GitError` only becomes exit 2 because `cmd_local`
+    catches it; without that the error leaves `main()`, the console script prints a
+    traceback, and the process exits **1** -- the code that means "patch coverage below
+    threshold". The `--repo` guard cannot cover this one: the directory here is real,
+    and it is git that cannot start.
+    """
+    import subprocess as sp
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(
+        sp, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError(2, "nope", "git"))
+    )
+    try:
+        code = main(["local", "--repo", str(tmp_path)])
+    finally:
+        monkey.undo()
+
+    assert code == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "could not run" in err
+    assert "could not infer a base branch" not in err, "that advice cannot install git"
+
+
+def test_lint_has_no_repo_and_is_unaffected(tmp_path):
+    """The check reads an attribute that only some subparsers define. `lint` takes no
+    `--repo`, and must not start failing because the guard assumed one."""
+    counts = tmp_path / "counts.json"
+    counts.write_text(_counts_json())
+    assert main(["lint", "--counts", str(counts), "--quiet"]) == 0
+
+
+def _counts_json():
+    import json
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "net_new_count": 0,
+            "total_count": 0,
+            "pre_existing_count": 0,
+            "suppressed_count": 0,
+            "per_level_net_new": {},
+            "per_level_total": {},
+        }
+    )
+
+
+# ------------- an artifact that cannot be written costs a file, not the verdict -----
+
+
+def test_a_failed_artifact_write_does_not_lose_the_verdict(repo, tmp_path, capsys):
+    """The gate is already decided by the time the JSON is written.
+
+    Raising there cost the summary, the PR comment, the step outputs AND the exit code
+    -- all of them computed correctly -- to report that a file could not be filed. It
+    exited 1, which is indistinguishable from the coverage having been too low.
+    """
+    repo_dir, base = repo
+    cov = tmp_path / "cov.xml"
+    _cobertura(cov, {4: 1, 5: 0})  # a real 50% -> the gate must still say "fail"
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("")
+
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(cov),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+            "--json-out",
+            str(blocked / "out.json"),
+        ]
+    )
+
+    assert code == EXIT_BLOCKED, "the gate's own verdict, not the writer's"
+    err = capsys.readouterr().err
+    assert "could not write" in err
+    assert "verdict below is unaffected" in err
+    assert "BELOW threshold" in err, "the summary still has to be produced"
+
+
+def test_the_artifact_directory_is_created(repo, tmp_path):
+    """`--json-out reports/x.json` is a request to put a file there; refusing over the
+    directory half of that request helps nobody."""
+    import json
+
+    repo_dir, base = repo
+    cov = tmp_path / "cov.xml"
+    _cobertura(cov, {4: 1, 5: 1})
+    out = tmp_path / "made" / "up" / "out.json"
+
+    assert (
+        main(
+            [
+                "coverage",
+                "--coverage-file",
+                str(cov),
+                "--base",
+                base,
+                "--repo",
+                str(repo_dir),
+                "--json-out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(out.read_text())["gate_result"] == "pass"

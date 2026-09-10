@@ -13,17 +13,35 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from brimyr.git import GitError
+
 _FALLBACK_BASES = ("main", "master", "origin/main", "origin/master")
 
 
 def _git_out(args: list[str], repo: str | Path) -> str | None:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    """Git's stdout, or ``None`` when git ran and said no.
+
+    "git ran and returned non-zero" and "git could not run at all" are different
+    answers and only the first one means "no base branch here". Letting the second
+    collapse into ``None`` made a missing git binary, or a `--repo` that does not
+    exist, come back as "could not infer a base branch — pass --base explicitly",
+    which is advice that cannot help: passing a base does not install git. So an
+    `OSError` is raised as a :class:`~brimyr.git.GitError` for the CLI to report as
+    the setup error it is, and ``None`` keeps its one narrow meaning.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise GitError(
+            f"could not run `git {' '.join(args)}` in {repo}: {exc}. Check that git is "
+            "installed and that the repository path exists."
+        ) from exc
     if proc.returncode != 0:
         return None
     return proc.stdout.strip()

@@ -163,6 +163,30 @@ That's the broken-run rule. The suite failed, produced no coverage file, or wrot
 unparseable. Look at the test output above the Brimyr step: the underlying failure is there,
 and Brimyr is refusing to convert it into a coverage number.
 
+## `--repo ... is not a directory`
+
+The path given to `--repo` (or the `repo` the action ran in) does not exist, or is a
+file. Exit 2, and deliberately not a green skip: detection looks for marker files, a
+path that is not there has none, and before this was checked a mistyped `--repo`
+reported "no test suite detected" and passed the build.
+
+## `could not run git ...`
+
+Git could not be started at all, which is different from git running and failing. Either
+it is not installed in the job (a slim container without it), or the working directory is
+unreadable. Exit 2, naming the path. Nothing was measured.
+
+## `could not write the ... JSON`
+
+The `--json-out` or `--quality-json-out` path could not be written: a permission problem,
+a read only filesystem, or a component of the path that is a file rather than a directory.
+Missing parent directories are created, so those are not a cause.
+
+This is a **warning and nothing more**. The gate is already decided by the time the
+artifact is written, so the run keeps its own exit code and the summary and PR comment
+still go out; only the file is missing. The artifact upload in `action.yml` is guarded on
+the file existing, so nothing downstream reads a stale one.
+
 ## Small pull requests aren't being gated
 
 Working as intended. `min_lines` defaults to `20`, so a diff with fewer changed executable

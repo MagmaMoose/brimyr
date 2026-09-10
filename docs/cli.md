@@ -154,3 +154,25 @@ themselves, or `--scan-broken`. A gate that cannot evaluate its input never goes
 ## `brimyr version`
 
 Prints the brimyr version (also `brimyr --version`).
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Pass. Includes a vacuous pass (nothing coverable changed) and a skip (no test suite detected). |
+| `1` | Patch coverage below the threshold, or blocking net-new quality findings. **Only ever a verdict on the pull request.** |
+| `2` | Broken run, setup error, or an input the gate could not evaluate. Never a verdict on the code. |
+
+A run that does both halves exits with the worse of the two.
+
+The line between `1` and `2` is load bearing, so environment problems are held to it:
+
+- A `--repo` that is not a directory is `2`, not a green skip. Detection finds no marker
+  files in a path that does not exist, so before this was checked a mistyped `--repo`
+  reported "no test suite detected" and passed.
+- Git failing to start at all (not installed, or an unreadable working directory) is `2`,
+  with a message naming the path.
+- A `--json-out` / `--quality-json-out` that cannot be written is **not** fatal. The gate
+  has already been decided by then, so the write failure is a warning and the run keeps
+  its own exit code: losing the summary, the PR comment and the verdict because a receipt
+  could not be filed is the worse trade. Parent directories are created for you.
