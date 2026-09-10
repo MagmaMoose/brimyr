@@ -1169,8 +1169,12 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_TEST_TIMEOUT,
         metavar="SECONDS",
         help=(
+            # `%%`, not `%`: argparse runs every help string through `help % params` to
+            # expand `%(default)s`, so a literal percent is read as a format spec and
+            # `--help` dies with `TypeError: %c requires int or char` — the one place in
+            # this file where the house style of writing "0% coverage" is a crash.
             f"Kill the test run after N seconds (default: {DEFAULT_TEST_TIMEOUT}). A "
-            "timeout is a broken run (exit 2), never 0% coverage. 0 waits forever."
+            "timeout is a broken run (exit 2), never 0%% coverage. 0 waits forever."
         ),
     )
     parser.add_argument(

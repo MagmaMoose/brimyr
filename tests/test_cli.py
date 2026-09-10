@@ -1264,3 +1264,65 @@ def test_the_json_artifact_agrees_with_the_action_output_about_an_unmeasured_run
     )
 
     assert json.loads(out.read_text())["gate_result"] == "skipped"
+
+
+# ---------------------- `--help` has to survive its own prose ----------------------
+
+
+def _every_parser():
+    """The root parser and every subparser, discovered rather than listed.
+
+    Enumerated from the parser itself so a subcommand added tomorrow is covered the day
+    it is added — a hardcoded list of names is a regression test that stops testing the
+    thing it was written for.
+    """
+    import argparse
+
+    from brimyr.cli import build_parser
+
+    root = build_parser()
+    yield "brimyr", root
+    for action in root._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            yield from action.choices.items()
+
+
+def test_every_subcommands_help_renders():
+    """`brimyr ci --help` used to die with `TypeError: %c requires int or char`.
+
+    argparse expands `%(default)s` by running `help % params` over EVERY help string, so
+    one literal `%` anywhere turns the whole subcommand's help into a traceback. This
+    repo writes "0% coverage" in prose constantly, which makes that a standing hazard
+    rather than a one-off slip — and nothing exercised `--help`, so it shipped.
+
+    Rendering is the assertion. It covers `usage=` (formatted unconditionally) and a
+    `description`/`epilog` carrying `%(prog)` as well, which a grep for `%` would have
+    to know to look for.
+    """
+    for name, parser in _every_parser():
+        assert parser.format_help(), f"{name} rendered an empty help"
+
+
+def test_the_subcommands_are_all_discovered():
+    """Guards the guard: if the discovery above silently found nothing, every assertion
+    in this section would pass over an empty loop."""
+    found = {name for name, _ in _every_parser()}
+    assert {"brimyr", "coverage", "ci", "local", "lint", "version"} <= found
+
+
+@pytest.mark.parametrize("subcommand", ["coverage", "ci", "local", "lint", "version"])
+def test_help_exits_cleanly_through_the_real_entry_point(subcommand, capsys):
+    """`format_help()` alone would not catch a crash in argparse's exit path, and the
+    traceback users actually hit came from `main()`."""
+    with pytest.raises(SystemExit) as exit_info:
+        main([subcommand, "--help"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out
+
+
+def test_the_percent_that_broke_it_still_reads_as_a_percent():
+    """The fix is `%%` in source, which must render as a single `%`. Deleting the
+    percent sign would also make `--help` work, and would quietly change the sentence
+    that tells people a timeout is not 0% coverage."""
+    (_, ci) = next((n, p) for n, p in _every_parser() if n == "ci")
+    assert "never 0% coverage" in ci.format_help()
