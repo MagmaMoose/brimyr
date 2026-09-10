@@ -201,3 +201,60 @@ def test_no_suite_summary_does_not_claim_the_code_is_fine(make_report):
     out = render_summary(_decision(make_report, 0, 0, no_ecosystem=True), Mode.PR)
     assert "not** a verdict on the code" in out
     assert "`coverage_file`" in out  # tells the reader how to fix a missed suite
+
+
+def test_unmeasured_summary_replaces_the_table_and_never_reads_as_a_pass(make_report):
+    """The dangerous rendering again, one state along.
+
+    A bats-only repo with no kcov has a passing suite and an empty report. Through the
+    normal path that renders "100% · 0/0 lines", which is what a well-tested PR looks
+    like — so the block has to replace the table exactly as the no-suite one does.
+    """
+    out = render_summary(
+        _decision(make_report, 0, 0, no_coverage=True, unmeasured=("Shell",)), Mode.PR
+    )
+    assert "`skipped`" in out
+    assert "no coverage was measured" in out
+    assert "Shell" in out
+    assert "Patch coverage" not in out
+    assert "100.0%" not in out
+
+
+def test_an_unmeasured_run_does_not_render_as_a_missing_suite(make_report):
+    """Two green states, two renderings. A repo whose tests RAN and passed must not be
+    told no test suite was detected — that sends the reader hunting for a marker file
+    when what they need is kcov."""
+    unmeasured = render_summary(
+        _decision(make_report, 0, 0, no_coverage=True, unmeasured=("Shell",)), Mode.PR
+    )
+    no_suite = render_summary(_decision(make_report, 0, 0, no_ecosystem=True), Mode.PR)
+    assert "No test suite detected" not in unmeasured
+    assert "no coverage was measured" not in no_suite
+
+
+def test_a_half_measured_repo_says_which_half_is_missing(make_report):
+    """`dotnet,shell` with no kcov reports a real .NET number over half the diff.
+
+    The changed shell lines are ABSENT from the denominator rather than uncovered in
+    it, so a percentage printed with no caveat describes a smaller pull request than
+    the one under review.
+    """
+    out = render_summary(
+        _decision(
+            make_report,
+            9,
+            10,
+            unmeasured=("Shell",),
+            unmeasured_note="shell coverage needs kcov",
+        ),
+        Mode.PR,
+    )
+    assert "Patch coverage" in out  # the measured half is still reported
+    assert "Not everything was measured" in out
+    assert "kcov" in out
+
+
+def test_a_fully_measured_run_says_nothing_about_measurement(make_report):
+    """No new noise on the runs that make up the whole fleet."""
+    out = render_summary(_decision(make_report, 9, 10), Mode.PR)
+    assert "Not everything was measured" not in out

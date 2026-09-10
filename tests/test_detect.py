@@ -8,6 +8,7 @@ from brimyr.detect import (
     CoverageFormat,
     detect_ecosystems,
     ecosystem,
+    for_repo,
     locate_coverage_file,
     locate_coverage_files,
 )
@@ -308,3 +309,139 @@ def test_the_trailing_suffix_form_counts_too(tmp_path):
     (tmp_path / "setup.py").write_text("from setuptools import setup\n")
     (tmp_path / "thing_test.py").write_text("def test_x(): pass\n")
     assert [e.key for e in detect_ecosystems(tmp_path)] == ["python"]
+
+
+# ─────────────────────────── shell / bats ───────────────────────────
+#
+# The marker set (`test`, `tests`, `*/tests`) is as over-broad as it gets on purpose:
+# a bats suite is almost never at the repo root, and `_has_marker` globs the root only.
+# Everything that keeps that safe is in `_shell_has_bats`, so that is what these test.
+
+
+def _bats(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("@test 'it works' { run true; [ \"$status\" -eq 0 ]; }\n")
+
+
+def test_detect_shell_by_a_bats_file(tmp_path):
+    _bats(tmp_path / "tests" / "scan.bats")
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["shell"]
+    assert found[0].command_str() == "bats --recursive tests"
+
+
+def test_a_tests_directory_alone_is_never_shell(tmp_path):
+    """The `pyproject.toml` trap, refused up front.
+
+    A marker with no confirming predicate detected python in every repo that shipped a
+    packaging file, ran `pytest --cov` and turned it red. `tests/` is a far more common
+    directory than `pyproject.toml` is a file, so a `tests/` marker without a strict
+    predicate would be that bug with a wider blast radius: `bats` on a python repo.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_thing.py").write_text("def test_x(): pass\n")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == []
+
+
+def test_a_vendored_bats_core_is_not_this_repos_suite(tmp_path):
+    """`test/bats` is bats-core itself, and bats-core's checkout has its own `test/*.bats`.
+
+    Detecting off it runs the FRAMEWORK's suite instead of the repo's — hundreds of
+    tests that pass or fail for reasons the pull request has nothing to do with.
+    """
+    _bats(tmp_path / "test" / "bats" / "test" / "bats.bats")
+    _bats(tmp_path / "test" / "test_helper" / "bats-assert" / "test" / "assert.bats")
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_a_vendored_framework_never_becomes_a_target(tmp_path):
+    _bats(tmp_path / "test" / "scan.bats")
+    _bats(tmp_path / "test" / "bats" / "test" / "bats.bats")
+    (found,) = detect_ecosystems(tmp_path)
+    assert found.command_str() == "bats --recursive test"
+
+
+def test_bats_files_under_node_modules_are_not_a_suite(tmp_path):
+    # `bats` is an npm package: installing it puts its own .bats files in the tree.
+    _bats(tmp_path / "node_modules" / "bats" / "test" / "suite.bats")
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_nested_bats_directories_collapse_to_their_ancestor(tmp_path):
+    """`--recursive` already descends, so passing both would run the same file twice."""
+    _bats(tmp_path / "tests" / "top.bats")
+    _bats(tmp_path / "tests" / "unit" / "deep.bats")
+    (found,) = detect_ecosystems(tmp_path)
+    assert found.command_str() == "bats --recursive tests"
+
+
+def test_sibling_suites_are_both_run(tmp_path):
+    _bats(tmp_path / "scripts" / "tests" / "lib.bats")
+    _bats(tmp_path / "tests" / "cli.bats")
+    (found,) = detect_ecosystems(tmp_path)
+    assert found.command_str() == "bats --recursive scripts/tests tests"
+
+
+def test_a_root_level_bats_file_is_passed_as_itself_not_as_dot(tmp_path):
+    """`.` plus `--recursive` would walk node_modules, .venv and every vendored checkout."""
+    _bats(tmp_path / "smoke.bats")
+    (found,) = detect_ecosystems(tmp_path)
+    assert found.command_str() == "bats --recursive smoke.bats"
+
+
+def test_a_bats_suite_beside_a_dotnet_solution_detects_both(tmp_path):
+    """The real case: a .NET repo whose certificate scanners are bash.
+
+    One ecosystem winning would trade the other's coverage for it — which is exactly
+    what forcing `test_command` did, and why `tests.yml` had to exist separately.
+    """
+    (tmp_path / "CertManagement.slnx").write_text("<Solution/>")
+    _bats(tmp_path / "tests" / "scan.bats")
+    assert [e.key for e in detect_ecosystems(tmp_path)] == ["dotnet", "shell"]
+
+
+def test_a_forced_shell_ecosystem_is_tailored_to_the_repo(tmp_path):
+    """Forcing is what a consumer does when detection misses their layout.
+
+    Handing them the table's placeholder would run `bats --recursive tests` in a repo
+    whose suite is somewhere else — a broken run caused by the escape hatch.
+    """
+    _bats(tmp_path / "scripts" / "tests" / "lib.bats")
+    assert for_repo(ecosystem("shell"), tmp_path).command_str() == (
+        "bats --recursive scripts/tests"
+    )
+
+
+def test_only_shell_declares_that_it_may_measure_nothing(tmp_path):
+    """`coverage_optional` is the licence to pass with no report, so it stays rationed.
+
+    Every other ecosystem instruments as it runs: a missing report there is a broken
+    run, and one extra `True` in this table would turn a .NET project with no
+    `coverlet.collector` from a red gate into a green one.
+    """
+    from brimyr.detect import ECOSYSTEMS
+
+    assert [e.key for e in ECOSYSTEMS if e.coverage_optional] == ["shell"]
+    assert ecosystem("shell").coverage_note
+
+
+def test_forcing_javascript_still_means_jest(tmp_path):
+    """`for_repo` must not start swapping binaries on the forced path.
+
+    `--ecosystem vitest` already exists for asking, and this action is consumed
+    fleet-wide on a pinned tag: a repo that forces `javascript` and runs jest today
+    would suddenly be handed a different runner.
+    """
+    (tmp_path / "package.json").write_text('{"devDependencies": {"vitest": "^2"}}')
+    (tmp_path / "vitest.config.ts").write_text("export default {}\n")
+    assert "jest" in for_repo(ecosystem("javascript"), tmp_path).command_str()
+    assert "vitest" in detect_ecosystems(tmp_path)[0].command_str()
+
+
+def test_a_discovered_path_reaches_the_shell_quoted(tmp_path):
+    """The command runs under `shell=True`, and these paths are the only part of it
+    nobody typed. Unquoted, a directory with a space arrives as two arguments and the
+    run fails on a name."""
+    _bats(tmp_path / "my tests" / "scan.bats")
+    found = for_repo(ecosystem("shell"), tmp_path)
+    assert found.command_str() == "bats --recursive 'my tests'"

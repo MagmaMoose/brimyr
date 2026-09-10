@@ -9,7 +9,7 @@ the job exits on the worse of the two. Chargate is the *security* sibling — th
 the subject, not the tool. One CLI, two surfaces: `action.yml` and
 `.pre-commit-hooks.yaml`.
 
-1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), installs
+1. **Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java / shell), installs
    its dependencies through the repo's own manager (`provision.py`: `uv run` /
    `poetry run` / `npm ci`, so a fleet-provisioned workflow needs no setup step), runs
    its tests **with coverage on**, and gates a PR **only on the lines the diff changed**

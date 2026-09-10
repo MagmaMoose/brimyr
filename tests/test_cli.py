@@ -1116,3 +1116,151 @@ def test_the_terminal_warning_keeps_its_real_newlines(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert err == "brimyr: warning: first\nsecond with 50% off\n"
+
+
+# ------------- a suite that measures nothing runs the whole flow green -------------
+
+
+def _shell_outcome(**kw):
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome
+
+    return RunOutcome(ecosystem("shell"), 0, (), None, unmeasured=True, **kw)
+
+
+def test_ci_on_a_bats_only_repo_passes_and_says_nothing_was_measured(
+    repo, tmp_path, capsys, monkeypatch
+):
+    """End to end, the failure that made `tests.yml` necessary.
+
+    `bats` emits no coverage, so `runner` found no report, `cli` called it a BROKEN test
+    run and exited 2 on a suite that passed. Verified live in the consuming org on
+    Prlg.iSuite.iBeheer, which was red for exactly this shape.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "BROKEN" not in err
+    assert "no coverage was measured" in err
+    assert json.loads(out.read_text())["unmeasured"] == ["Shell"]
+
+
+def test_ci_reports_an_unmeasured_run_as_skipped_not_as_a_pass(repo, tmp_path, monkeypatch):
+    """`gate_result` has to keep the states apart. "checked and clean" and "nothing was
+    measured" reaching a downstream `if` as the same word is how a dashboard ends up
+    counting an unmeasured repo as a covered one."""
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    outputs = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    repo_dir, base = repo
+
+    assert (
+        main(
+            ["ci", "--mode", "pr", "--ecosystem", "shell", "--base", base, "--repo", str(repo_dir)]
+        )
+        == 0
+    )
+    written = outputs.read_text()
+    assert "gate_result=skipped" in written
+    assert "gate_failed=false" in written
+
+
+def test_ci_still_gates_the_measured_half_of_a_polyglot_repo(repo, tmp_path, monkeypatch):
+    """The shell half measuring nothing must not switch the .NET gate off.
+
+    A repo that runs `dotnet,shell` still fails below the threshold on its .NET files —
+    otherwise adding a bats suite silently buys an unfailable coverage gate.
+    """
+    from brimyr import cli as cli_mod
+    from brimyr.coverage.model import CoverageBuilder
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome, RunResult
+
+    builder = CoverageBuilder()
+    builder.record("a.py", 4, 1)
+    builder.record("a.py", 5, 0)  # 50% of the changed lines
+    measured = RunOutcome(ecosystem("dotnet"), 0, (), builder.build())
+    monkeypatch.setattr(
+        cli_mod, "run_tests", lambda *a, **k: RunResult((measured, _shell_outcome()))
+    )
+
+    repo_dir, base = repo
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "dotnet",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
+    assert code == 1
+
+
+def test_the_json_artifact_agrees_with_the_action_output_about_an_unmeasured_run(
+    repo, tmp_path, monkeypatch
+):
+    """Two consumers of one verdict must not read it differently.
+
+    `gate_result` is `skipped` on the step output; the JSON artifact saying `pass` for
+    the same run would let a dashboard count an unmeasured repo as a covered one.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert json.loads(out.read_text())["gate_result"] == "skipped"

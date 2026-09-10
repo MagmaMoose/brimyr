@@ -66,7 +66,7 @@ jobs:
 | --- | --- | --- |
 | `threshold` | `80` | Patch-coverage percentage that blocks below it. |
 | `quality` | `false` | Also gate on net-new quality findings, running Chargate as a nested step. |
-| `ecosystem` | auto-detected | Force one or more: `python`, `javascript`, `dotnet`, `java`. |
+| `ecosystem` | auto-detected | Force one or more: `python`, `javascript`, `dotnet`, `java`, `shell`. |
 | `mode` | `auto` | `auto` from the event · `pr` (diff gate) · `baseline`. |
 | `pr_comment` | `false` | Post one consolidated PR comment. Needs `pull-requests: write`. |
 | `sonar_url` | — | Set to export the trend to SonarQube. |
@@ -80,7 +80,7 @@ All inputs and outputs →
 | --- | --- |
 | [Setup and usage](https://magmamoose.github.io/brimyr/setup/) | Workflows, the pre-push hook, thresholds |
 | [Patch coverage](https://magmamoose.github.io/brimyr/patch-coverage/) · [Quality findings](https://magmamoose.github.io/brimyr/quality-findings/) | What counts as covered, and what counts as net-new |
-| [.NET](https://magmamoose.github.io/brimyr/dotnet/) · [Java / JVM](https://magmamoose.github.io/brimyr/java/) | Per-ecosystem notes |
+| [.NET](https://magmamoose.github.io/brimyr/dotnet/) · [Java / JVM](https://magmamoose.github.io/brimyr/java/) · [Shell / bats](https://magmamoose.github.io/brimyr/shell/) | Per-ecosystem notes |
 | [Action reference](https://magmamoose.github.io/brimyr/action/) · [CLI reference](https://magmamoose.github.io/brimyr/cli/) | Every input, output and command |
 | [Architecture](https://magmamoose.github.io/brimyr/architecture/) · [Troubleshooting](https://magmamoose.github.io/brimyr/troubleshooting/) | How it works, and what to do when it doesn't |
 

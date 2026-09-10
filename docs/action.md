@@ -33,7 +33,7 @@ code, which is the worse of the two.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, comma-separated. |
+| `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, `shell`, comma-separated. Each named ecosystem runs its own test command and the reports are merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash. |
 | `test_command` | string | *(detected)* | Replace the detected test command with a shell command string. |
 | `provision` | bool | `true` | Install the repo's test dependencies first, with the repo's own dependency manager (`uv run` / `poetry run` / `npm ci`), so a detected suite can actually be launched. See [Dependency provisioning](#dependency-provisioning). Ignored when `test_command` is set. |
 | `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. **Globs are expanded**, which is how you name `dotnet test`'s per-project `TestResults/*/coverage.cobertura.xml`. A pattern matching nothing is an error, not an empty result. Format is sniffed when you leave it off. |
@@ -51,6 +51,8 @@ Brimyr does it, using whatever the repo already declares:
 | Poetry 1.x (`[tool.poetry]`, no `[project]`) | `poetry install`, then `poetry run <test command>` |
 | `package.json` with no `node_modules` | `npm ci` (falling back to `npm install`), then the detected command |
 | Maven, .NET | nothing: `mvn` and `dotnet test` restore their own |
+| A bats suite with no `bats` on PATH | `npx --yes bats ...` |
+| A bats suite with `kcov` on PATH | the run is wrapped in `kcov`, writing Cobertura under `coverage/kcov/`. kcov is used when present and [never installed](shell.md). |
 
 `pytest-cov` is injected because it is Brimyr's requirement, not yours: a repo can have
 a complete pytest setup and still fail `pytest --cov` on an unrecognised argument. It is
@@ -170,7 +172,7 @@ gates.
 | Output | Description |
 | --- | --- |
 | `mode` | Resolved run mode: `pr` or `baseline`. |
-| `gate_result` | `pass`, `fail`, `error` or `skipped`. `error` means a broken run, never 0% coverage; `skipped` means no test suite was detected, so nothing ran and nothing was gated. Neither is a measurement. |
+| `gate_result` | `pass`, `fail`, `error` or `skipped`. `error` means a broken run, never 0% coverage; `skipped` means nothing was gated, either because no test suite was detected or because the suites that ran measure no coverage at all ([bats without kcov](shell.md)). Neither is a measurement. |
 | `patch_coverage` | Patch coverage percentage, two decimal places. |
 | `covered_lines` | Covered changed executable lines. |
 | `total_lines` | Total changed executable lines, the patch-coverage denominator. |
