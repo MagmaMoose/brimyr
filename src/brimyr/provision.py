@@ -226,7 +226,7 @@ def _shell_plan(command: str, which: Which) -> Provision:
 
     if not which("kcov"):
         return Provision(
-            command=command or None,
+            command=command,
             note=(f"{runner_note}; " if runner_note else "")
             + "no `kcov` on PATH — bats will run without coverage instrumentation",
         )
