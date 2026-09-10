@@ -43,7 +43,7 @@ def _git(args: list[str], cwd: str | Path | None = None) -> subprocess.Completed
     failure on the pull request.
     """
     try:
-        return subprocess.run(
+        return subprocess.run(  # nosec B603 B607 - argv is a fixed git subcommand list, never user-derived; "git" by name is intentional
             ["git", *args],
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,
