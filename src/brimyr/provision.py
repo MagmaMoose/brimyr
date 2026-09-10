@@ -41,6 +41,7 @@ injected so the whole decision table is unit-tested without a toolchain.
 from __future__ import annotations
 
 import shutil
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +98,44 @@ def _first_existing(root: Path, names: tuple[str, ...]) -> str | None:
     return None
 
 
+def _parse_pyproject(root: Path) -> dict:
+    """``pyproject.toml`` as data, or ``{}`` when there isn't one that parses.
+
+    Read as TOML rather than grepped, because every question below is about a *table*
+    and a substring answers a different question: `# note: pytest-cov is needed` in a
+    comment reads as a declared dependency, and the injection that comment was asking
+    for is then skipped. `pytest --cov` dies on `unrecognized arguments`, which is the
+    exact broken run this module exists to prevent (brimyr#56).
+
+    `tomllib` is stdlib on 3.11+, so this costs no dependency. A malformed file falls
+    back to ``{}`` and the caller degrades to running the tests as-is: a pyproject
+    brimyr cannot parse is the repo's problem to fix, not a reason to fail its gate.
+    """
+    text = _read(root / "pyproject.toml")
+    if not text:
+        return {}
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
+def _poetry_declares(data: dict, package: str) -> bool:
+    """True if a pre-2.0 Poetry project declares ``package`` anywhere it can.
+
+    Four places, because Poetry moved the goalposts twice: the main table, the legacy
+    `dev-dependencies`, and any number of named groups under `group.<name>`.
+    """
+    poetry = data.get("tool", {}).get("poetry", {})
+    if not isinstance(poetry, dict):
+        return False
+    tables = [poetry.get("dependencies"), poetry.get("dev-dependencies")]
+    groups = poetry.get("group")
+    if isinstance(groups, dict):
+        tables.extend(g.get("dependencies") for g in groups.values() if isinstance(g, dict))
+    return any(package in t for t in tables if isinstance(t, dict))
+
+
 def _python_plan(root: Path, command: str, which: Which) -> Provision:
     """How this Python repo installs itself, and how to run pytest inside that.
 
@@ -114,10 +153,14 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
     uv reads that repo as having no dependencies and would install none of them.
     Poetry 2.x writes a standard ``[project]`` table and goes down the uv path like
     everything else.
+
+    Every question here is asked of parsed TOML, not of the file's text: see
+    :func:`_parse_pyproject` for why a substring answers a different question.
     """
-    pyproject = _read(root / "pyproject.toml")
-    has_pep621 = "[project]" in pyproject
-    poetry_only = "[tool.poetry" in pyproject and not has_pep621
+    data = _parse_pyproject(root)
+    tool = data.get("tool", {}) if isinstance(data.get("tool"), dict) else {}
+    has_pep621 = "project" in data
+    poetry_only = "poetry" in tool and not has_pep621
 
     if poetry_only:
         if not which("poetry"):
@@ -125,7 +168,7 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
                 note="poetry project, but `poetry` is not on PATH — running tests as-is"
             )
         setup = ["poetry install --no-interaction --no-ansi"]
-        if "pytest-cov" not in pyproject:
+        if not _poetry_declares(data, "pytest-cov"):
             # Into poetry's OWN virtualenv, never the ambient interpreter. Skipped when
             # the repo already declares the plugin, so a project that pins a version
             # keeps it.
@@ -141,7 +184,7 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
     if not which("uv"):
         return Provision(note="`uv` is not on PATH — running tests as-is")
 
-    if (root / "uv.lock").is_file() or has_pep621 or "[tool.uv]" in pyproject:
+    if (root / "uv.lock").is_file() or has_pep621 or "uv" in tool:
         locked = " (uv.lock)" if (root / "uv.lock").is_file() else ""
         return Provision(
             command=f"uv run --with pytest-cov {command}",
