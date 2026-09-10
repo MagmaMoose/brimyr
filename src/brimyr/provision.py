@@ -186,6 +186,58 @@ def _javascript_plan(root: Path, which: Which) -> Provision:
     )
 
 
+#: Where the kcov wrap writes, matching the `shell` ecosystem's `coverage_paths`. kcov
+#: leaves one Cobertura per traced binary plus a merged one; both are ingested and
+#: merging is covered-wins, so the overlap is idempotent.
+_KCOV_OUT = "coverage/kcov"
+
+#: kcov instruments every script it sees execute, including the test files themselves.
+#: Counting `.bats` files as covered source inflates the number with the tests' own
+#: lines — the denominator is meant to be the scripts under test.
+_KCOV_EXCLUDE = "/.git/,/node_modules/,.bats"
+
+
+def _shell_plan(command: str, which: Which) -> Provision:
+    """Make a bats suite runnable, and measurable only if kcov is already there.
+
+    Two independent gaps, and only one of them is Brimyr's to close.
+
+    **bats** is closed the way JavaScript's is: `npx --yes bats` fetches bats-core into
+    a cache. Without it a runner with no bats gets a shell `127`, which is a broken run
+    and a red gate on a repo whose tests are fine — the exact failure `provision` exists
+    to prevent, and the reason detecting shell is safe to do fleet-wide at all.
+
+    **kcov** is deliberately NOT closed. There is no repo-owned manager to install it
+    through: it is a system package (`apt-get install kcov`) or a source build, so
+    provisioning it would mean either sudo-ing into the caller's runner image for every
+    shell repo on the estate or paying minutes of build time per job [cost]. So it is
+    used when present and never installed — and because its absence is the normal case,
+    `shell` is `coverage_optional`: a bats suite that passes and measures nothing is a
+    PASS that says it measured nothing, not a broken run.
+    """
+    runner_note = ""
+    if not which("bats"):
+        if not which("npx"):
+            return Provision(note="neither `bats` nor `npx` is on PATH — running tests as-is")
+        # bats-core publishes itself to npm under `bats`; `npx --yes` is the same
+        # cache-and-run path the JS ecosystem already relies on.
+        command = f"npx --yes {command}"
+        runner_note = "npx --yes bats (bats was not on PATH)"
+
+    if not which("kcov"):
+        return Provision(
+            command=command,
+            note=(f"{runner_note}; " if runner_note else "")
+            + "no `kcov` on PATH — bats will run without coverage instrumentation",
+        )
+
+    wrapped = f"kcov --include-path=. --exclude-pattern={_KCOV_EXCLUDE} {_KCOV_OUT} {command}"
+    return Provision(
+        command=wrapped,
+        note=(f"{runner_note}; " if runner_note else "") + f"kcov wrap -> {_KCOV_OUT}",
+    )
+
+
 def plan(
     eco: Ecosystem,
     repo: str | Path = ".",
@@ -205,4 +257,6 @@ def plan(
         return _python_plan(root, cmd, which)
     if eco.key == "javascript":
         return _javascript_plan(root, which)
+    if eco.key == "shell":
+        return _shell_plan(cmd, which)
     return Provision(note=f"{eco.label} restores its own dependencies")

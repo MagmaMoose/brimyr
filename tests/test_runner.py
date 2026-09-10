@@ -243,3 +243,109 @@ def test_a_setup_command_that_cannot_launch_is_a_broken_run(tmp_path):
 
     assert not outcome.ok
     assert "npm vanished" in outcome.error
+
+
+# ── "no coverage by nature" is not "coverage failed" ────────────────────────
+#
+# One observation, an empty report, with two causes that must never be conflated:
+# pytest emitting none means the run broke, bats emitting none means bats. The
+# ecosystem declares which it is (`coverage_optional`); nothing else decides.
+
+
+SHELL = ecosystem("shell")
+DOTNET = ecosystem("dotnet")
+
+
+def test_a_passing_bats_suite_with_no_kcov_is_a_pass_not_a_broken_run(tmp_path):
+    """The failure this exists to prevent, in one line.
+
+    `bats` writes no coverage and kcov is installed nowhere by default, so today's
+    guard reported "BROKEN test run — tests failed or produced no coverage" and exited
+    2 on a suite that passed. `mode: baseline` does not soften it: baseline suppresses
+    the threshold, not a broken run.
+    """
+    outcome = run_one(SHELL, tmp_path, runner=lambda cmd, cwd: _completed(0), which=_which("bats"))
+
+    assert outcome.ok
+    assert outcome.unmeasured
+    assert outcome.report is None
+    assert outcome.error is None
+
+
+def test_a_failing_bats_suite_is_still_broken(tmp_path):
+    """Unmeasured is about coverage, never about the verdict.
+
+    With no report to inspect, the exit status IS the whole result — so a non-zero one
+    has to be the loudest thing in the outcome, not a footnote under a green gate.
+    """
+    outcome = run_one(SHELL, tmp_path, runner=lambda cmd, cwd: _completed(1), which=_which("bats"))
+
+    assert not outcome.ok
+    assert not outcome.unmeasured
+    assert "the tests failed" in outcome.error
+    assert "no coverage file found" not in outcome.error
+
+
+def test_bats_missing_from_the_runner_is_still_nothing_ran(tmp_path):
+    """127 is the one thing `coverage_optional` must not launder.
+
+    "This ecosystem measures nothing" and "the test runner was never installed" both
+    end with no report on disk, and treating the second as the first turns a suite that
+    never executed into a green gate — the vacuous pass by a brand-new route.
+    """
+    outcome = run_one(SHELL, tmp_path, runner=lambda cmd, cwd: _completed(127), which=_which())
+
+    assert not outcome.ok
+    assert not outcome.unmeasured
+    assert "command not found" in outcome.error
+
+
+def test_a_dotnet_project_that_measures_nothing_stays_red(tmp_path):
+    """Prlg.iSuite.iBeheer: a test project with no `coverlet.collector`.
+
+    `dotnet test` passes and writes no `coverage.cobertura.xml`, which is a genuine
+    "can measure, did not" — the case the shell fix must NOT sweep up with it. If this
+    ever goes green the split has been implemented as a blanket softening.
+    """
+    outcome = run_one(DOTNET, tmp_path, runner=lambda cmd, cwd: _completed(0))
+
+    assert not outcome.ok
+    assert not outcome.unmeasured
+    assert "no coverage file found" in outcome.error
+
+
+def test_kcov_output_is_ingested_like_any_other_cobertura(tmp_path):
+    """Present kcov means a measured shell half, not a permanently unmeasured one."""
+    report = tmp_path / "coverage" / "kcov" / "kcov-merged" / "cobertura.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        "<coverage><packages><package><classes>"
+        '<class filename="scripts/lib/scan.sh"><lines><line number="7" hits="1"/></lines></class>'
+        "</classes></package></packages></coverage>"
+    )
+
+    outcome = run_one(
+        SHELL, tmp_path, runner=lambda cmd, cwd: _completed(0), which=_which("bats", "kcov")
+    )
+
+    assert outcome.ok
+    assert not outcome.unmeasured
+    assert outcome.report.get("scripts/lib/scan.sh").is_covered(7)
+
+
+def test_a_polyglot_repo_measures_the_half_that_can_and_names_the_half_that_cannot(tmp_path):
+    """`dotnet,shell` in one repo: run both, merge, and do not go red for the shell half.
+
+    The other half of the same trap — one unmeasurable ecosystem must not drag a
+    perfectly good .NET number down with it, and the shell gap must not vanish either.
+    """
+    (tmp_path / "TestResults" / "guid").mkdir(parents=True)
+    _write_cobertura(tmp_path / "TestResults" / "guid" / "coverage.cobertura.xml")
+
+    result = run_tests(
+        [DOTNET, SHELL], tmp_path, runner=lambda cmd, cwd: _completed(0), which=_which("bats")
+    )
+
+    assert not result.broken
+    assert result.report.get("a.py") is not None
+    assert [e.key for e in result.unmeasured] == ["shell"]

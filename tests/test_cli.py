@@ -1116,3 +1116,213 @@ def test_the_terminal_warning_keeps_its_real_newlines(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert err == "brimyr: warning: first\nsecond with 50% off\n"
+
+
+# ------------- a suite that measures nothing runs the whole flow green -------------
+
+
+def _shell_outcome(**kw):
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome
+
+    return RunOutcome(ecosystem("shell"), 0, (), None, unmeasured=True, **kw)
+
+
+def test_ci_on_a_bats_only_repo_passes_and_says_nothing_was_measured(
+    repo, tmp_path, capsys, monkeypatch
+):
+    """End to end, the failure that made `tests.yml` necessary.
+
+    `bats` emits no coverage, so `runner` found no report, `cli` called it a BROKEN test
+    run and exited 2 on a suite that passed. Verified live in the consuming org on
+    Prlg.iSuite.iBeheer, which was red for exactly this shape.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "BROKEN" not in err
+    assert "no coverage was measured" in err
+    assert json.loads(out.read_text())["unmeasured"] == ["Shell"]
+
+
+def test_ci_reports_an_unmeasured_run_as_skipped_not_as_a_pass(repo, tmp_path, monkeypatch):
+    """`gate_result` has to keep the states apart. "checked and clean" and "nothing was
+    measured" reaching a downstream `if` as the same word is how a dashboard ends up
+    counting an unmeasured repo as a covered one."""
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    outputs = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    repo_dir, base = repo
+
+    assert (
+        main(
+            ["ci", "--mode", "pr", "--ecosystem", "shell", "--base", base, "--repo", str(repo_dir)]
+        )
+        == 0
+    )
+    written = outputs.read_text()
+    assert "gate_result=skipped" in written
+    assert "gate_failed=false" in written
+
+
+def test_ci_still_gates_the_measured_half_of_a_polyglot_repo(repo, tmp_path, monkeypatch):
+    """The shell half measuring nothing must not switch the .NET gate off.
+
+    A repo that runs `dotnet,shell` still fails below the threshold on its .NET files —
+    otherwise adding a bats suite silently buys an unfailable coverage gate.
+    """
+    from brimyr import cli as cli_mod
+    from brimyr.coverage.model import CoverageBuilder
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome, RunResult
+
+    builder = CoverageBuilder()
+    builder.record("a.py", 4, 1)
+    builder.record("a.py", 5, 0)  # 50% of the changed lines
+    measured = RunOutcome(ecosystem("dotnet"), 0, (), builder.build())
+    monkeypatch.setattr(
+        cli_mod, "run_tests", lambda *a, **k: RunResult((measured, _shell_outcome()))
+    )
+
+    repo_dir, base = repo
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "dotnet",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
+    assert code == 1
+
+
+def test_the_json_artifact_agrees_with_the_action_output_about_an_unmeasured_run(
+    repo, tmp_path, monkeypatch
+):
+    """Two consumers of one verdict must not read it differently.
+
+    `gate_result` is `skipped` on the step output; the JSON artifact saying `pass` for
+    the same run would let a dashboard count an unmeasured repo as a covered one.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert json.loads(out.read_text())["gate_result"] == "skipped"
+
+
+# ---------------------- `--help` has to survive its own prose ----------------------
+
+
+def _every_parser():
+    """The root parser and every subparser, discovered rather than listed.
+
+    Enumerated from the parser itself so a subcommand added tomorrow is covered the day
+    it is added — a hardcoded list of names is a regression test that stops testing the
+    thing it was written for.
+    """
+    import argparse
+
+    from brimyr.cli import build_parser
+
+    root = build_parser()
+    yield "brimyr", root
+    for action in root._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            yield from action.choices.items()
+
+
+def test_every_subcommands_help_renders():
+    """`brimyr ci --help` used to die with `TypeError: %c requires int or char`.
+
+    argparse expands `%(default)s` by running `help % params` over EVERY help string, so
+    one literal `%` anywhere turns the whole subcommand's help into a traceback. This
+    repo writes "0% coverage" in prose constantly, which makes that a standing hazard
+    rather than a one-off slip — and nothing exercised `--help`, so it shipped.
+
+    Rendering is the assertion. It covers `usage=` (formatted unconditionally) and a
+    `description`/`epilog` carrying `%(prog)` as well, which a grep for `%` would have
+    to know to look for.
+    """
+    for name, parser in _every_parser():
+        assert parser.format_help(), f"{name} rendered an empty help"
+
+
+def test_the_subcommands_are_all_discovered():
+    """Guards the guard: if the discovery above silently found nothing, every assertion
+    in this section would pass over an empty loop."""
+    found = {name for name, _ in _every_parser()}
+    assert {"brimyr", "coverage", "ci", "local", "lint", "version"} <= found
+
+
+@pytest.mark.parametrize("subcommand", ["coverage", "ci", "local", "lint", "version"])
+def test_help_exits_cleanly_through_the_real_entry_point(subcommand, capsys):
+    """`format_help()` alone would not catch a crash in argparse's exit path, and the
+    traceback users actually hit came from `main()`."""
+    with pytest.raises(SystemExit) as exit_info:
+        main([subcommand, "--help"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out
+
+
+def test_the_percent_that_broke_it_still_reads_as_a_percent():
+    """The fix is `%%` in source, which must render as a single `%`. Deleting the
+    percent sign would also make `--help` work, and would quietly change the sentence
+    that tells people a timeout is not 0% coverage."""
+    (_, ci) = next((n, p) for n, p in _every_parser() if n == "ci")
+    assert "never 0% coverage" in ci.format_help()

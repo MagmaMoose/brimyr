@@ -13,10 +13,12 @@ shared diff corpus — live in `SUBSYSTEMS.md`. Read that section when you touch
 - **Bugs here are silent passes, not crashes.** An unmatched path, a report parsed as
   the wrong format, a dropped report — each removes files from the denominator and
   returns a comfortable number. Check the denominator before believing a good result.
-- **An empty report has THREE causes and only one is red.** A failed run (`broken`) is a
-  tool error; a real 0% is a measurement; a repo with no suite is `no_ecosystem` — green,
-  and its summary REPLACES the coverage table so it can never read as a vacuous
-  `100% · 0/0`. Never let those two renderings converge. Detail: `SUBSYSTEMS.md`.
+- **An empty report has FOUR causes and only one is red.** A failed run (`broken`) is a
+  tool error; a real 0% is a measurement; no suite is `no_ecosystem`; a suite that ran,
+  passed and cannot measure (bats, no kcov) is `no_coverage`. The last two are green, and
+  each REPLACES the coverage table with its OWN wording — four states, four renderings,
+  never converging. `Ecosystem.coverage_optional` is the only licence to pass with no
+  report: .NET missing `coverlet.collector` stays red. Detail: `SUBSYSTEMS.md`.
 - **Never import I/O into `coverage/`.** No `subprocess`, `os`, network or Actions code —
   the purity is the design, not an accident.
 - **Never hand-bump the version.** python-semantic-release writes both `pyproject.toml`

@@ -51,6 +51,7 @@ from brimyr.detect import (
     SonarStrategy,
     detect_ecosystems,
     ecosystem,
+    for_repo,
 )
 from brimyr.gate import (
     DEFAULT_MIN_LINES,
@@ -196,8 +197,20 @@ def counts_to_dict(decision: GateDecision) -> dict[str, object]:
         "total_executable_lines": (
             None if decision.total is None else decision.total.executable_lines
         ),
-        # Mirror _emit_outputs: a broken run is an error, not a 0%/pass result.
-        "gate_result": "error" if decision.broken else ("fail" if decision.failed else "pass"),
+        # Mirror _emit_outputs: a broken run is an error, not a 0%/pass result, and a
+        # run that measured nothing is "skipped" rather than a clean bill of health.
+        # (`no_ecosystem` has reported "pass" here since it shipped and is deliberately
+        # left alone: this action is consumed fleet-wide on a pinned tag, and quietly
+        # changing a value in the artifact would break whoever tests it for equality.)
+        "gate_result": (
+            "error"
+            if decision.broken
+            else ("fail" if decision.failed else ("skipped" if decision.no_coverage else "pass"))
+        ),
+        # Which ecosystems ran clean and measured nothing. The line that explains a
+        # `total_lines` of 0 without anyone having to guess which of its four causes
+        # this was.
+        "unmeasured": list(decision.unmeasured),
         "files": [
             {
                 "path": f.path,
@@ -216,6 +229,14 @@ def _print_summary(decision: GateDecision, *, broken: bool) -> None:
         _eprint(
             "brimyr: BROKEN test run — tests failed or produced no coverage. "
             "This is a tool error (build red), not 0% patch coverage."
+        )
+        return
+    if decision.no_coverage:
+        # Not "0%" and not "100% of nothing": the suite ran, it passed, and this
+        # ecosystem does not measure. Printing a percentage here would invent one.
+        _eprint(
+            f"brimyr: tests passed, but no coverage was measured "
+            f"({', '.join(decision.unmeasured)}) — nothing to gate on."
         )
         return
     patch = decision.patch
@@ -254,7 +275,11 @@ def _emit_outputs(decision: GateDecision, *, mode: Mode | None, broken: bool) ->
         "gate_result": (
             "error"
             if broken
-            else ("fail" if decision.failed else ("skipped" if decision.no_ecosystem else "pass"))
+            else (
+                "fail"
+                if decision.failed
+                else ("skipped" if (decision.no_ecosystem or decision.no_coverage) else "pass")
+            )
         ),
         "gate_failed": "true" if (broken or decision.failed) else "false",
     }
@@ -561,9 +586,11 @@ class Collected:
     """What one coverage collection produced, and how to read an empty one.
 
     An empty ``report`` is ambiguous on its own and the ambiguity is the dangerous
-    part, so the two ways of getting one are separate flags: ``broken`` (a suite ran
+    part, so the ways of getting one are separate flags: ``broken`` (a suite ran
     and failed, or instrumented nothing) is red, ``no_ecosystem`` (there is no suite
-    to run) is green. Neither is "0% coverage", which is a real measurement.
+    to run) is green, and ``unmeasured`` (a suite ran and passed but measures no
+    coverage at all — bats with no kcov) is green too. None of them is "0% coverage",
+    which is a real measurement.
     """
 
     report: CoverageReport = field(default_factory=lambda: CoverageReport(()))
@@ -572,6 +599,10 @@ class Collected:
     sonar_paths: dict[str, tuple[str, ...]] = field(default_factory=dict)
     coverage_paths: list[str] = field(default_factory=list)
     no_ecosystem: bool = False
+    #: Ecosystems that ran clean and produced no coverage by nature. Reported, never a
+    #: failure — but never silent either: their changed lines are absent from the
+    #: denominator rather than uncovered in it.
+    unmeasured: list[Ecosystem] = field(default_factory=list)
 
 
 def _collect_coverage(
@@ -620,7 +651,10 @@ def _collect_coverage(
             eco = ecosystem(key)
             if eco is None:
                 return _fail(f"unknown ecosystem {key!r}")
-            ecosystems.append(eco)
+            # Tailored to THIS checkout, exactly as detection is: forcing an ecosystem
+            # is what a consumer does when detection does not fire, and the table's
+            # placeholder shell command would look for a suite in the wrong directory.
+            ecosystems.append(for_repo(eco, args.repo))
     else:
         ecosystems = detect_ecosystems(args.repo)
 
@@ -668,12 +702,25 @@ def _collect_coverage(
             )
         if outcome.error:
             _eprint(f"brimyr: {outcome.ecosystem.label}: {outcome.error}")
+        if outcome.unmeasured:
+            # A warning and not a plain log line, for the same reason the Sonar skips
+            # are: a gap nobody sees is a gap that reads as a pass. The changed lines of
+            # an unmeasured ecosystem are ABSENT from the denominator, so the percentage
+            # printed next to it is a number about the other half of the repo.
+            why = outcome.ecosystem.coverage_note
+            note = f" — {why}" if why else ""
+            _warn(
+                f"{outcome.ecosystem.label}: the tests passed but no coverage was "
+                f"measured{note}. Changed {outcome.ecosystem.label} lines are not in the "
+                "patch-coverage denominator."
+            )
     return Collected(
         report=result.report,
         broken=result.broken,
         ecosystems=ecosystems,
         sonar_paths=sonar_paths,
         coverage_paths=coverage_paths,
+        unmeasured=list(result.unmeasured),
     )
 
 
@@ -888,7 +935,7 @@ def _resolved_ecosystems(args: argparse.Namespace) -> list[Ecosystem]:
     analysis from a green job.
     """
     if args.ecosystem:
-        return [e for e in (ecosystem(k) for k in args.ecosystem) if e]
+        return [for_repo(e, args.repo) for e in (ecosystem(k) for k in args.ecosystem) if e]
     return detect_ecosystems(args.repo)
 
 
@@ -958,6 +1005,17 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     broken = collected.broken
     ecosystems = collected.ecosystems
     no_ecosystem = collected.no_ecosystem
+    unmeasured = tuple(eco.label for eco in collected.unmeasured)
+    # Deduplicated in order: two ecosystems can share a reason, and a sentence that
+    # repeats itself reads as a rendering bug rather than as an explanation.
+    unmeasured_note = "; ".join(
+        dict.fromkeys(eco.coverage_note for eco in collected.unmeasured if eco.coverage_note)
+    )
+    # Nothing measurable came back at all, and it is not because the run broke or
+    # because there was nothing to run: every suite that ran declares that it produces
+    # no coverage. Without this the empty report falls through to the ordinary path and
+    # renders "100% · 0/0 lines", which is what a well-tested PR looks like.
+    no_coverage = bool(unmeasured) and not report and not broken
     html_message = _maybe_render_html(args, collected.coverage_paths)
 
     # One policy for both numbers. Total coverage has to honour the same exclude globs
@@ -967,7 +1025,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     policy = _patch_policy(args, (repo_abs,))
 
     # Patch coverage only in gate mode; baseline computes nothing to gate on.
-    if mode.gates and not broken and not no_ecosystem:
+    if mode.gates and not broken and not no_ecosystem and not no_coverage:
         if not args.base:
             return _fail("PR/gate mode needs --base (the PR target ref).")
         try:
@@ -990,6 +1048,9 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
             total=total,
             min_lines=args.min_lines,
             no_ecosystem=no_ecosystem,
+            no_coverage=no_coverage,
+            unmeasured=unmeasured,
+            unmeasured_note=unmeasured_note,
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -999,7 +1060,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     # against the same projectKey would overwrite what it just uploaded.
     sonar_message = (
         None
-        if (broken or wrapped or no_ecosystem)
+        if (broken or wrapped or no_ecosystem or no_coverage)
         else _maybe_run_sonar(args, collected.sonar_paths, ecosystems)
     )
     if html_message:
@@ -1108,8 +1169,12 @@ def _add_shared_diff_args(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_TEST_TIMEOUT,
         metavar="SECONDS",
         help=(
+            # `%%`, not `%`: argparse runs every help string through `help % params` to
+            # expand `%(default)s`, so a literal percent is read as a format spec and
+            # `--help` dies with `TypeError: %c requires int or char` — the one place in
+            # this file where the house style of writing "0% coverage" is a crash.
             f"Kill the test run after N seconds (default: {DEFAULT_TEST_TIMEOUT}). A "
-            "timeout is a broken run (exit 2), never 0% coverage. 0 waits forever."
+            "timeout is a broken run (exit 2), never 0%% coverage. 0 waits forever."
         ),
     )
     parser.add_argument(
@@ -1312,7 +1377,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="KEY",
         help=(
-            "Force an ecosystem (python|javascript|dotnet|java) instead of auto-detect. Repeatable."
+            "Force an ecosystem (python|javascript|dotnet|java|shell) instead of "
+            "auto-detect. Repeatable."
         ),
     )
     ci.add_argument(

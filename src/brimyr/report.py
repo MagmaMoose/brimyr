@@ -41,7 +41,7 @@ def render_summary(
         status = "`error`"
     elif decision.failed:
         status = "`fail`"
-    elif decision.no_ecosystem:
+    elif decision.no_ecosystem or decision.no_coverage:
         status = "`skipped`"
     else:
         status = "`pass`"
@@ -69,6 +69,22 @@ def render_summary(
             "this repo does have tests, Brimyr is not finding them (set `ecosystem` or "
             "`coverage_file` on the action)."
         )
+        lines.append("")
+        return "\n".join(lines)
+
+    # The fourth reading of an empty report, and it replaces the table for exactly the
+    # reason the one above does: this run's tests passed, so "100% · 0/0 lines" would be
+    # both true and a lie. `no_ecosystem` is "nothing to run"; this is "it ran, it
+    # passed, nobody measured it", and the two must not render the same.
+    if decision.no_coverage:
+        named = ", ".join(decision.unmeasured) or "the detected ecosystem(s)"
+        lines.append(
+            f"> ⚪ **Tests ran, but no coverage was measured** — {named} produced no "
+            "coverage report. The suite passed; there is simply no number to gate on. "
+            "This is **not** 0% coverage and **not** a broken run."
+        )
+        lines.append("")
+        lines.append(f"_{_unmeasured_reason(decision)}_")
         lines.append("")
         return "\n".join(lines)
 
@@ -137,11 +153,34 @@ def render_summary(
         )
         lines.append("")
 
+    # A number that covers half the repo has to say which half. `dotnet,shell` with no
+    # kcov reports real .NET coverage while every changed shell line sits OUTSIDE the
+    # denominator — not uncovered in it — so the percentage above is silently narrower
+    # than the diff it appears to describe.
+    if decision.unmeasured:
+        named = ", ".join(decision.unmeasured)
+        lines.append(
+            f"⚠️ **Not everything was measured** — {named} produced no coverage report, "
+            f"so changed {named} lines are **not** in the figures above (they are absent "
+            f"from the denominator, not counted as uncovered). {_unmeasured_reason(decision)}"
+        )
+        lines.append("")
+
     if sonar_message:
         lines.append(f"**SonarQube:** {sonar_message}")
         lines.append("")
 
     return "\n".join(lines)
+
+
+#: The way out, appended to whatever the ecosystems said about themselves. A gap the
+#: reader cannot see a fix for reads as a permanent one.
+_UNMEASURED_FIX = "Supply a report with `coverage_file` if the job produces one itself."
+
+
+def _unmeasured_reason(decision: GateDecision) -> str:
+    note = decision.unmeasured_note
+    return f"{note}. {_UNMEASURED_FIX}" if note else _UNMEASURED_FIX
 
 
 def append_step_summary(text: str) -> None:

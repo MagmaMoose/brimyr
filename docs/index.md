@@ -35,6 +35,7 @@ half runs Chargate's net-new engine rather than growing its own
 | JavaScript / TypeScript | `package.json` | `jest`, or `vitest run` when the repo uses vitest | lcov |
 | .NET | `*.sln`, `*.csproj`, `*.fsproj`, `*.vbproj` | `dotnet test --collect` | Cobertura |
 | Java / JVM | `pom.xml` | `mvn ... jacoco:prepare-agent test jacoco:report` | JaCoCo |
+| Shell | a real `*.bats` file | `bats --recursive` over the directories holding them | Cobertura, [only if `kcov` is installed](shell.md) |
 
 A polyglot repo matches more than one, produces one report per language, and Brimyr
 merges them into a single number. Override any of it with `ecosystem`,

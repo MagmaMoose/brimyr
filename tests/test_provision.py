@@ -175,3 +175,62 @@ def test_the_wrapped_command_is_the_one_passed_in(tmp_path):
     result = plan(PY, tmp_path, command="pytest -q --cov", which=_has("uv"))
 
     assert result.command == "uv run --with pytest-cov pytest -q --cov"
+
+
+# ── Shell: bats is provisioned, kcov is not ─────────────────────────────────
+
+
+SHELL = ecosystem("shell")
+
+
+def test_bats_on_path_runs_as_is(tmp_path):
+    result = plan(SHELL, tmp_path, which=_has("bats"))
+
+    assert result.setup == ()
+    assert result.command == SHELL.command_str()
+    assert "kcov" in result.note
+
+
+def test_bats_is_fetched_through_npx_when_it_is_not_installed(tmp_path):
+    """A shell `127` is a broken run and a red gate on a repo whose tests are fine.
+
+    Shell is auto-detected fleet-wide off a `.bats` file, and nothing installs bats on
+    a hosted runner, so without this every repo that owns a bats suite would go red the
+    day it was detected. Same closure as `npx --yes jest`.
+    """
+    result = plan(SHELL, tmp_path, which=_has("npx"))
+
+    assert result.command == f"npx --yes {SHELL.command_str()}"
+    assert result.setup == ()
+
+
+def test_kcov_is_used_when_present_and_writes_where_detection_looks(tmp_path):
+    """The wrap and `Ecosystem.coverage_paths` are one contract in two files.
+
+    A wrap that writes somewhere else produces a green, silent, permanently unmeasured
+    shell half — the report is there and nothing ever finds it.
+    """
+    result = plan(SHELL, tmp_path, which=_has("bats", "kcov"))
+
+    assert result.command.startswith("kcov ")
+    assert result.command.endswith(SHELL.command_str())
+    out = result.command.split()[3]
+    assert any(pattern.startswith(f"{out}/") for pattern in SHELL.coverage_paths)
+
+
+def test_kcov_is_never_installed(tmp_path):
+    """No setup command, ever: kcov is a system package, not a repo-owned dependency.
+
+    Installing it would mean `apt-get` into the caller's runner image for every shell
+    repo on the estate, or minutes of source build per job. Its absence is why `shell`
+    is `coverage_optional` — the gap is designed for, not worked around.
+    """
+    for which in (_has("bats"), _has("bats", "kcov"), _has("npx"), _NOTHING):
+        assert plan(SHELL, tmp_path, which=which).setup == ()
+
+
+def test_no_bats_and_no_npx_declines_and_says_why(tmp_path):
+    result = plan(SHELL, tmp_path, which=_NOTHING)
+
+    assert result.command is None
+    assert "bats" in result.note and "npx" in result.note

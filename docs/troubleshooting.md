@@ -122,6 +122,9 @@ purpose. Detection needs one of:
 - `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
 - `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
 - `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
+- A real, non-vendored `*.bats` file for [shell](shell.md). A `tests/` directory on
+  its own is never enough, and a vendored bats-core submodule under `test/bats` is
+  deliberately ignored.
 
 Force it with `ecosystem:`, or skip detection entirely with `coverage_file:`. A forced
 `ecosystem:` that then fails is still an error: explicit intent is never downgraded to
@@ -163,6 +166,10 @@ That's the broken-run rule. The suite failed, produced no coverage file, or wrot
 unparseable. Look at the test output above the Brimyr step: the underlying failure is there,
 and Brimyr is refusing to convert it into a coverage number.
 
+The one exception is an ecosystem that cannot produce coverage in the first place. A bats
+suite emits nothing without `kcov`, so a passing one is a pass, not a broken run. See
+[Shell / bats](shell.md).
+
 ## `--repo ... is not a directory`
 
 The path given to `--repo` (or the `repo` the action ran in) does not exist, or is a
@@ -186,6 +193,26 @@ This is a **warning and nothing more**. The gate is already decided by the time 
 artifact is written, so the run keeps its own exit code and the summary and PR comment
 still go out; only the file is missing. The artifact upload in `action.yml` is guarded on
 the file existing, so nothing downstream reads a stale one.
+
+## `Tests ran, but no coverage was measured`
+
+Not an error, and not 0%. The suites that ran passed, and none of them measures coverage:
+today that means [bats without `kcov`](shell.md). `gate_result` is `skipped`, the exit
+code is `0`, and the summary replaces the coverage table so the run cannot be mistaken for
+a well tested one.
+
+Install `kcov` on the runner to turn it into a measurement:
+
+```yaml
+- run: sudo apt-get update && sudo apt-get install -y kcov
+```
+
+## `Not everything was measured`
+
+A polyglot run where one ecosystem measured and another did not, for example `dotnet,shell`
+on a runner with no `kcov`. The percentage above the warning is real, but it covers only
+the measured half: a file the coverage report never mentions contributes nothing to the
+denominator, so the unmeasured half's changed lines are absent rather than uncovered.
 
 ## Small pull requests aren't being gated
 

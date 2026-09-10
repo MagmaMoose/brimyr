@@ -30,6 +30,20 @@ of them (forced intent is never downgraded to a skip).
   than printing `100% · 0/0 lines`, which is indistinguishable from a well-tested PR.
   Never let those two renderings converge — a repo that quietly lost detection has to
   look different from one that passed. The warning is loud on purpose.
+- **`shell` is the marker discipline at its limit.** A bats suite is almost never at the
+  root and `_has_marker` globs the root only, so the markers are `*.bats`, `test`, `tests`,
+  `*/tests` — the broadest set in the table — and ALL the safety is in
+  `_shell_has_bats`/`_shell_test_targets`: a real, non-vendored `.bats` file, or nothing.
+  Two vendor lists, not one: `_VENDOR_DIRS` (bats is an npm package, so `node_modules`
+  ships `.bats` files) plus `_BATS_VENDOR_DIRS` — the conventional layout vendors the
+  FRAMEWORK (`test/bats` is bats-core as a submodule, `test/test_helper/bats-*` its
+  helpers), and bats-core's own checkout carries `test/*.bats`. Detect off those and the
+  gate runs the framework's suite instead of the repo's.
+- **Two rows cannot be static, and `for_repo` is where they stop being.** JavaScript picks
+  jest or vitest from what the repo declares; shell can only be invoked once the search
+  has found where the `.bats` files are. It must be applied to a FORCED `--ecosystem` too
+  (`cli._collect_coverage`, `_resolved_ecosystems`) — forcing is what a consumer does when
+  detection misses their layout, and the table's placeholder command looks in `tests/`.
 - **Gradle is a marker but is not auto-run.** `build.gradle` makes a repo *recognised* as
   Java (so a detection failure can name it), but the built-in command is `mvn`, so
   `_java_is_maven` requires a `pom.xml`. Gradle users pass `test_command` +
@@ -126,6 +140,39 @@ these shipped as violations of it.
   escaped again, so the annotation renders the literal `%250A`. Actions-only: a terminal
   wants real newlines. The messages that reach `_warn` are built from up to 300 chars of
   a failed subprocess's stderr, so they are exactly the multi-line ones.
+
+## "Cannot measure" vs "did not measure" (`detect.py`, `runner.py`, `gate.py`)
+
+One observation — no coverage file — with two causes that must never be conflated. The
+ecosystem declares which it is; nothing else gets a vote.
+
+- **`Ecosystem.coverage_optional` is the only licence to pass with no report, and `shell`
+  is the only row that has it.** pytest, jest, coverlet and JaCoCo instrument as they run,
+  so a missing report there means the run broke: `Prlg.iSuite.iBeheer` is red because its
+  test project lacks `coverlet.collector`, which is a genuine "can measure, did not" and
+  must STAY red. One extra `True` in that table turns every such repo green.
+- **The exit status is still the whole verdict.** `unmeasured` is about coverage, never
+  about pass/fail: a bats suite that exits non-zero is broken, and a `127` is still
+  "nothing ran" (the toolchain was never installed), never "nothing to measure".
+- **A green `no_coverage` run must not render like a green `no_ecosystem` one.** Both
+  replace the coverage table; "no test suite detected" sends the reader hunting for a
+  marker file when what they need is kcov. Different fixes, different wording.
+- **A HALF-measured repo is the new vacuous pass.** `dotnet,shell` with no kcov reports a
+  real .NET number over a diff whose shell lines are ABSENT from the denominator, not
+  uncovered in it. `GateDecision.unmeasured` exists so the summary can say which half the
+  percentage is about; it is a label and never an input to the verdict.
+- **kcov is used when present and never installed.** No repo-owned manager owns it: it is
+  `apt-get` into the caller's runner image or minutes of source build per job [cost].
+  `bats` itself IS provisioned (`npx --yes bats`) for the reason every other provisioning
+  rule exists — a shell `127` is a red gate on a repo whose tests are fine, and shell is
+  auto-detected fleet-wide. The kcov wrap's output directory and the ecosystem's
+  `coverage_paths` are one contract in two files: disagree and the shell half is
+  permanently, silently unmeasured.
+- **shellcheck is deliberately not here.** `quality_linters` REPLACES chargate's curated
+  set rather than extending it, so adding `BASH_SHELLCHECK` from this side would mean
+  hardcoding a copy of that curated list across the process boundary — the coupling
+  `.claude/decisions/0002` exists to avoid. It belongs in chargate's `quality` flavor;
+  until then a consumer names the whole list.
 
 ## SonarQube (`sonar.py`, `sonar_dotnet.py`)
 

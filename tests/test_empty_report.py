@@ -75,3 +75,22 @@ def test_a_report_with_files_is_still_fine(tmp_path):
     )
     code = main(["ci", "--mode", "baseline", "--coverage-file", str(p)])
     assert code == 0  # nosec B101
+
+
+def test_an_unmeasured_ecosystem_does_not_get_to_return_an_empty_report():
+    """`coverage_optional` licenses NO report, never an empty one.
+
+    An empty report is a coverage tool that ran and instrumented nothing, which is the
+    failure this whole module exists to catch. If kcov produces one, that is the JaCoCo
+    `argLine` bug wearing a different hat — not "shell measures nothing by nature", and
+    not something the shell exemption may quietly absorb.
+    """
+    from brimyr.detect import ecosystem
+
+    empty = RunOutcome(
+        ecosystem=ecosystem("shell"),
+        returncode=0,
+        coverage_paths=(),
+        report=CoverageReport(()),
+    )
+    assert not empty.ok
