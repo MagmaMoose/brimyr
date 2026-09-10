@@ -43,7 +43,9 @@ def _git(args: list[str], cwd: str | Path | None = None) -> subprocess.Completed
     failure on the pull request.
     """
     try:
-        return subprocess.run(
+        # argv is a list, so no shell; "git" is resolved from PATH on purpose, because
+        # pinning an absolute path would break every runner that installs it elsewhere.
+        return subprocess.run(  # nosec B603 B607
             ["git", *args],
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,

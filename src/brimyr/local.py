@@ -30,7 +30,8 @@ def _git_out(args: list[str], repo: str | Path) -> str | None:
     the setup error it is, and ``None`` keeps its one narrow meaning.
     """
     try:
-        proc = subprocess.run(
+        # Same as `brimyr.git._git`: a list argv (no shell), and "git" from PATH.
+        proc = subprocess.run(  # nosec B603 B607
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
