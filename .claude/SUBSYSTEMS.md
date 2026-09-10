@@ -121,6 +121,11 @@ these shipped as violations of it.
   *because it is an output*: `action.yml` guards the upload on `hashFiles`, so a missing
   artifact cannot be read as a clean one. The same reasoning does NOT extend to an input
   — a counts JSON that cannot be read is still exit 2.
+- **`::warning::` is one workflow command per LINE.** `_escape_annotation` does
+  `%`→`%25` FIRST, then `\r`/`\n` — reverse that order and the `%` of a fresh `%0A` is
+  escaped again, so the annotation renders the literal `%250A`. Actions-only: a terminal
+  wants real newlines. The messages that reach `_warn` are built from up to 300 chars of
+  a failed subprocess's stderr, so they are exactly the multi-line ones.
 
 ## SonarQube (`sonar.py`, `sonar_dotnet.py`)
 

@@ -701,15 +701,43 @@ def _default_project_key() -> str:
     return os.environ.get("GITHUB_REPOSITORY", "").replace("/", "_")
 
 
+#: GitHub's workflow-command data escaping, in the ONE order that works. `%` has to go
+#: first: run it after the others and the `%` of a just-written `%0A` is escaped again,
+#: so the annotation displays the literal text `%250A` instead of a line break.
+_ANNOTATION_ESCAPES = (("%", "%25"), ("\r", "%0D"), ("\n", "%0A"))
+
+
+def _escape_annotation(message: str) -> str:
+    """Make ``message`` safe to carry inside one ``::warning::`` command.
+
+    A workflow command is parsed **one per line**, so a raw newline ends it: everything
+    after the first line stops being an annotation and becomes ordinary log output. The
+    messages that reach here are exactly the ones that carry newlines — `sonar.py`,
+    `sonar_dotnet.py` and `html_report.py` all build theirs from up to 300 characters of
+    a failed subprocess's stderr — so the multi-line diagnostic the warning exists to
+    surface was the part being dropped. That is this function's own docstring failure
+    ("plain stderr scrolls past in a green job and nobody sees it") one step later.
+    """
+    for raw, escaped in _ANNOTATION_ESCAPES:
+        message = message.replace(raw, escaped)
+    return message
+
+
 def _warn(message: str) -> None:
     """Annotate the run, not just the log.
 
     Plain stderr scrolls past in a green job and nobody sees it — which is exactly how
     "Sonar is wired up" stayed believable while nothing was ever uploaded. On Actions
     this surfaces on the summary page; elsewhere it is an ordinary stderr line.
+
+    Escaping is Actions-only on purpose: `%0A` is what makes a multi-line annotation
+    render, and it is unreadable noise in a terminal, where a real newline is simply a
+    newline.
     """
-    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "brimyr: warning: "
-    _eprint(f"{prefix}{message}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        _eprint(f"::warning::{_escape_annotation(message)}")
+        return
+    _eprint(f"brimyr: warning: {message}")
 
 
 def _missing_sonar_props(

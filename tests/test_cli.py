@@ -1056,3 +1056,63 @@ def test_the_artifact_directory_is_created(repo, tmp_path):
         == 0
     )
     assert json.loads(out.read_text())["gate_result"] == "pass"
+
+
+# ------------- one workflow command, one line -------------
+
+
+def test_an_annotation_is_a_single_line(monkeypatch, capsys):
+    """GitHub parses one workflow command PER LINE.
+
+    A raw newline ended the command, so everything after the first line stopped being an
+    annotation and became ordinary log output -- and the messages that reach `_warn` are
+    exactly the ones that carry newlines, being built from a failed subprocess's stderr.
+    The multi-line diagnostic the warning exists to surface was the part being dropped.
+    """
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("SonarQube: failed:\nERROR: second line\nERROR: third line")
+
+    err = capsys.readouterr().err.rstrip("\n")
+    assert "\n" not in err
+    assert err.startswith("::warning::")
+    assert err.count("%0A") == 2
+    assert "second line" in err and "third line" in err
+
+
+def test_a_literal_percent_survives_the_annotation(monkeypatch, capsys):
+    """`%` has to be escaped FIRST or the `%` of a just-written `%0A` is escaped again
+    and the annotation shows `%250A` instead of a line break."""
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("coverage fell to 50% off\nsecond line")
+
+    err = capsys.readouterr().err
+    assert "50%25 off" in err
+    assert "%0A" in err
+    assert "%250A" not in err
+
+
+def test_a_carriage_return_is_escaped_too(monkeypatch, capsys):
+    """A Windows-built tool's stderr ends its lines with \\r\\n, and a bare \\r ends a
+    workflow command just as a \\n does."""
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("first\r\nsecond")
+
+    assert capsys.readouterr().err.rstrip("\n") == "::warning::first%0D%0Asecond"
+
+
+def test_the_terminal_warning_keeps_its_real_newlines(monkeypatch, capsys):
+    """Escaping is Actions-only: `%0A` is unreadable noise in a terminal, where a
+    newline is simply a newline."""
+    from brimyr.cli import _warn
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _warn("first\nsecond with 50% off")
+
+    err = capsys.readouterr().err
+    assert err == "brimyr: warning: first\nsecond with 50% off\n"
