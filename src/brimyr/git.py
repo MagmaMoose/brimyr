@@ -33,13 +33,29 @@ class ShallowCloneError(MergeBaseError):
 
 
 def _git(args: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(cwd) if cwd is not None else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    """Run one git command. Every failure leaves here as a :class:`GitError`.
+
+    `subprocess.run` raises `OSError` before git ever starts when the binary is not on
+    PATH or `cwd` does not exist, and an `OSError` is not a `GitError` — so it sailed
+    past every `except GitError` in the CLI, printed a traceback, and exited **1**. The
+    exit code is the damage: 1 is this tool's word for "patch coverage below threshold",
+    so a container without git, or a typo in `--repo`, was reported to CI as a coverage
+    failure on the pull request.
+    """
+    try:
+        return subprocess.run(  # nosec B603 B607 - argv is a fixed git subcommand list, never user-derived; "git" by name is intentional
+            ["git", *args],
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        where = f" in {cwd}" if cwd is not None else ""
+        raise GitError(
+            f"could not run `git {' '.join(args)}`{where}: {exc}. Nothing was measured "
+            "— check that git is installed and that the repository path exists."
+        ) from exc
 
 
 def _git_out(args: list[str], cwd: str | Path | None = None) -> str:

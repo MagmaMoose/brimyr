@@ -141,6 +141,35 @@ def _sniff_xml_format(path: Path) -> CoverageFormat:
     return CoverageFormat.JACOCO if is_jacoco(head) else CoverageFormat.COBERTURA
 
 
+def _write_json(path: str, payload: dict[str, object], what: str) -> None:
+    """Write one JSON artifact. Never changes the verdict — deliberately.
+
+    The gate has already been decided by the time any of these run, so a failed write
+    costs a *file*, while raising would cost the summary, the PR comment, the step
+    outputs and the exit code that were about to be produced from a verdict that was
+    computed correctly. Losing the answer because its receipt could not be filed is the
+    worse trade, and it is the same failure-isolation rule the HTML report, the PR
+    comment and the Sonar leg already follow: an output sink never fails the gate.
+
+    That is safe here in a way it would NOT be for an input. A missing artifact cannot
+    be mistaken for a clean one, because `action.yml` guards its upload on `hashFiles`
+    and skips a file that is not there. It is a `_warn`, not a bare stderr line, for the
+    same reason the Sonar skips are: an unnoticed gap reads as success.
+
+    Parent directories are created because `--json-out reports/x.json` is a request to
+    put a file there, and refusing over the directory half of that request helps nobody.
+    """
+    target = Path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError as exc:
+        _warn(
+            f"could not write the {what} JSON to {target}: {exc}. The verdict below is "
+            "unaffected; only the artifact is missing."
+        )
+
+
 def _patch_policy(args: argparse.Namespace, extra_prefixes: tuple[str, ...] = ()) -> PatchPolicy:
     return PatchPolicy(
         strip_prefixes=tuple(args.strip_prefix or ()) + extra_prefixes,
@@ -374,9 +403,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
         return _fail(str(exc))
 
     if args.json_out:
-        Path(args.json_out).write_text(
-            json.dumps(quality_to_dict(decision), indent=2), encoding="utf-8"
-        )
+        _write_json(args.json_out, quality_to_dict(decision), "quality")
 
     summary = report_mod.render_quality_summary(decision)
     report_mod.append_step_summary(summary)
@@ -475,9 +502,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         _eprint(f"brimyr: html report: {html_message}")
 
     if args.json_out:
-        Path(args.json_out).write_text(
-            json.dumps(counts_to_dict(decision), indent=2), encoding="utf-8"
-        )
+        _write_json(args.json_out, counts_to_dict(decision), "patch-coverage")
     if not args.quiet:
         _print_summary(decision, broken=False)
     _emit_outputs(decision, mode=None, broken=False)
@@ -676,15 +701,43 @@ def _default_project_key() -> str:
     return os.environ.get("GITHUB_REPOSITORY", "").replace("/", "_")
 
 
+#: GitHub's workflow-command data escaping, in the ONE order that works. `%` has to go
+#: first: run it after the others and the `%` of a just-written `%0A` is escaped again,
+#: so the annotation displays the literal text `%250A` instead of a line break.
+_ANNOTATION_ESCAPES = (("%", "%25"), ("\r", "%0D"), ("\n", "%0A"))
+
+
+def _escape_annotation(message: str) -> str:
+    """Make ``message`` safe to carry inside one ``::warning::`` command.
+
+    A workflow command is parsed **one per line**, so a raw newline ends it: everything
+    after the first line stops being an annotation and becomes ordinary log output. The
+    messages that reach here are exactly the ones that carry newlines — `sonar.py`,
+    `sonar_dotnet.py` and `html_report.py` all build theirs from up to 300 characters of
+    a failed subprocess's stderr — so the multi-line diagnostic the warning exists to
+    surface was the part being dropped. That is this function's own docstring failure
+    ("plain stderr scrolls past in a green job and nobody sees it") one step later.
+    """
+    for raw, escaped in _ANNOTATION_ESCAPES:
+        message = message.replace(raw, escaped)
+    return message
+
+
 def _warn(message: str) -> None:
     """Annotate the run, not just the log.
 
     Plain stderr scrolls past in a green job and nobody sees it — which is exactly how
     "Sonar is wired up" stayed believable while nothing was ever uploaded. On Actions
     this surfaces on the summary page; elsewhere it is an ordinary stderr line.
+
+    Escaping is Actions-only on purpose: `%0A` is what makes a multi-line annotation
+    render, and it is unreadable noise in a terminal, where a real newline is simply a
+    newline.
     """
-    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "brimyr: warning: "
-    _eprint(f"{prefix}{message}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        _eprint(f"::warning::{_escape_annotation(message)}")
+        return
+    _eprint(f"brimyr: warning: {message}")
 
 
 def _missing_sonar_props(
@@ -953,9 +1006,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
         _eprint(f"brimyr: html report: {html_message}")
 
     if args.json_out:
-        Path(args.json_out).write_text(
-            json.dumps(counts_to_dict(decision), indent=2), encoding="utf-8"
-        )
+        _write_json(args.json_out, counts_to_dict(decision), "patch-coverage")
 
     # The quality half, when Chargate ran ahead of us and left its two files behind.
     # Rendered into the SAME summary and the SAME comment as coverage — one consolidated
@@ -977,9 +1028,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
             # gate cannot evaluate, and a gate that cannot evaluate must not go green.
             return _fail(str(exc))
         if args.quality_json_out:
-            Path(args.quality_json_out).write_text(
-                json.dumps(quality_to_dict(quality), indent=2), encoding="utf-8"
-            )
+            _write_json(args.quality_json_out, quality_to_dict(quality), "quality")
 
     summary = report_mod.render_summary(
         decision, mode, broken=broken, ecosystems=ecosystems, sonar_message=sonar_message
@@ -1011,7 +1060,13 @@ def cmd_ci(args: argparse.Namespace) -> int:
 
 
 def cmd_local(args: argparse.Namespace) -> int:
-    base = resolve_local_base(args.repo, args.base)
+    try:
+        base = resolve_local_base(args.repo, args.base)
+    except bgit.GitError as exc:
+        # `None` means git ran and found no base branch. This means git never ran, and
+        # the two need different advice — "pass --base explicitly" cannot fix a missing
+        # git binary.
+        return _fail(str(exc))
     if base is None:
         return _fail("could not infer a base branch to diff against — pass --base explicitly.")
     args.base = base
@@ -1361,9 +1416,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _check_repo(args: argparse.Namespace) -> int | None:
+    """Refuse a `--repo` that is not a directory, before anything reads it.
+
+    The traceback this replaces was not the worst of it. `brimyr ci --repo /typo` found
+    no marker files — there is no directory to find them in — and reported the
+    `no ecosystem detected` skip: **exit 0, gate green, on a path that does not exist.**
+    A mistyped input laundered into "this repo has no tests" is precisely the vacuous
+    pass the rest of this tool is built to refuse, so it has to be checked up front
+    rather than inferred from the silence downstream.
+
+    Only subcommands that take `--repo` have the attribute (`lint` does not), and its
+    default of `.` always exists, so a run that does not pass the flag never reaches the
+    check. `is_dir` and not `exists`: a `--repo` pointing at a FILE fails identically
+    everywhere it is used.
+    """
+    repo = getattr(args, "repo", None)
+    if repo is None or Path(repo).is_dir():
+        return None
+    return _fail(
+        f"--repo {repo!r} is not a directory. Nothing was run and nothing was measured "
+        "— this is a setup error, not a repository without tests."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    repo_error = _check_repo(args)
+    if repo_error is not None:
+        return repo_error
     return args.func(args)
 
 

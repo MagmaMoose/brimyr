@@ -32,3 +32,7 @@ shared diff corpus — live in `SUBSYSTEMS.md`. Read that section when you touch
   never as "did the run emit coverage?", and provisioning that declines must say why.
   Detail: `SUBSYSTEMS.md`.
 - **Shallow clones break merge-base** → `ShallowCloneError` → exit 2.
+- **`1` is a verdict on the PR; every other failure is `2`.** A setup error arriving as
+  `1` says "your coverage is too low" about a missing binary — raw `OSError` from a
+  subprocess is the usual leak, and a bad `--repo` used to pass GREEN. Mirror image: an
+  output sink (`--json-out`, HTML, comment, Sonar) never fails the gate. `SUBSYSTEMS.md`.

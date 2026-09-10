@@ -96,6 +96,37 @@ returns a comfortable number over code nobody measured.
   `report is not None`. The usual JVM cause is a surefire `<argLine>` that overrides
   rather than appends `@{argLine}`, silently detaching the JaCoCo agent.
 
+## The CLI's own failures (`cli.py`, `git.py`, `local.py`)
+
+The exit-code contract is only worth what it is worth at the edges, and all three of
+these shipped as violations of it.
+
+- **`subprocess.run` raises before the command starts.** A missing binary or an
+  unreadable `cwd` is `OSError`, which is not a `GitError`, so it walked past every
+  `except GitError` in the CLI and exited **1** — the code that means "coverage below
+  threshold". `git._git` and `local._git_out` convert it at the boundary; do not catch it
+  at call sites, which is how one of the two was missed for so long.
+- **`--repo` is checked up front (`_check_repo`, called from `main`) and the reason is
+  not the traceback.** `brimyr ci --repo /typo` found no marker files — there is no
+  directory to find them in — and reported the green `no_ecosystem` skip: exit 0 on a
+  path that does not exist. A mistyped input laundered into "this repo has no tests" is
+  the vacuous pass in a new costume. `lint` has no `--repo`, so the check reads the
+  attribute defensively; `.` is the default and must never be rejected.
+- **`local`'s `None` means git ran and found no base branch.** Nothing else. When git
+  cannot run at all, "pass --base explicitly" is advice that cannot help, so that case
+  raises `GitError` instead of collapsing into the same return value.
+- **`_write_json` warns and returns; it never raises.** By the time any artifact is
+  written the verdict exists, so raising costs the summary, the PR comment, the step
+  outputs and the exit code in order to report that a file could not be filed. Safe
+  *because it is an output*: `action.yml` guards the upload on `hashFiles`, so a missing
+  artifact cannot be read as a clean one. The same reasoning does NOT extend to an input
+  — a counts JSON that cannot be read is still exit 2.
+- **`::warning::` is one workflow command per LINE.** `_escape_annotation` does
+  `%`→`%25` FIRST, then `\r`/`\n` — reverse that order and the `%` of a fresh `%0A` is
+  escaped again, so the annotation renders the literal `%250A`. Actions-only: a terminal
+  wants real newlines. The messages that reach `_warn` are built from up to 300 chars of
+  a failed subprocess's stderr, so they are exactly the multi-line ones.
+
 ## SonarQube (`sonar.py`, `sonar_dotnet.py`)
 
 - **.NET must WRAP build+test** (`sonar_dotnet.session`): the CLI scanner cannot analyze
