@@ -481,7 +481,7 @@ runs:
       id: quality
       if: ${{ inputs.quality == 'true' }}
       continue-on-error: true
-      uses: magmamoose/chargate@90725a6c6d3fc40c7114cad73d17829fc673e95f # v2.11.28
+      uses: magmamoose/chargate@d61ef64002a07656eaa949e2a39fe6a541fa7073 # v2.11.45
       with:
         checkout: 'false'
         setup_python: 'false'
