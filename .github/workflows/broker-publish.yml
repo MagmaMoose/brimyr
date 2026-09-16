@@ -178,7 +178,7 @@ jobs:
         # with a `sub` the trust policy does not match — that is the check working, not a
         # broken workflow. eu-west-1 because the bucket, the role and the broker are all
         # in eu-west-1 in account 202518311296.
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: eu-west-1
