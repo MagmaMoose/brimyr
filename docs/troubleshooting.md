@@ -146,6 +146,7 @@ declined. The common ones:
 | ``` `uv` is not on PATH ``` | The action installs `uv` for you when `provision` is `true`, so you'll only see this outside the action, e.g. `brimyr local`. Install `uv`, or install your test dependencies. |
 | `no installable Python project found` | No `pyproject.toml`, no `requirements*.txt`. Add one, or set `test_command`. |
 | ``` poetry project, but `poetry` is not on PATH ``` | A pre-2.0 Poetry layout (`[tool.poetry]`, no `[project]`). Install Poetry in the job. |
+| ``` `npm` is not on PATH ``` | The action installs Node when the runner has none and `provision` is `true`, so you'll see this with `provision: 'false'` or outside the action. Install Node in the job. |
 
 You can always take it over yourself: install the dependencies in an earlier step and
 set `provision: 'false'`, set `test_command` to something that works (which disables

@@ -15,6 +15,7 @@ reports. Anything here can be overridden from the action (``test_command`` /
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -265,6 +266,33 @@ def _js_uses_vitest(root: Path) -> bool:
     return isinstance(test_script, str) and "vitest" in test_script
 
 
+#: `node --test` (or `tsx --test`) anywhere in one simple command of the `test` script,
+#: flags and all: `node --import tsx --test tests/`, `npm run build && node --test`.
+#: `--test-reporter=spec` alone is not a match; it configures the runner, it does not start it.
+_NODE_TEST_SCRIPT = re.compile(r"(?:^|[\s;&|(/])(?:node|tsx)\s(?:[^;&|]*\s)?--test(?=\s|$)")
+
+
+def _js_uses_node_test(root: Path) -> bool:
+    """True if the repo's `test` script runs Node's built-in test runner.
+
+    Handed to jest, a `node:test` suite either finds no test files (jest does not match
+    `*.test.mjs`) or cannot import `node:test` at all; both leave no `coverage/lcov.info`,
+    and the broken-run rule turns a green suite red. MagmaMoose/mcp is the live case.
+
+    Read from the `test` script only, never from dependencies: `node:test` ships with Node,
+    so there is nothing to declare. A false positive is cheap by construction, because the
+    command it selects runs the repo's own `npm test` under c8 rather than a runner Brimyr
+    picked.
+    """
+    try:
+        data = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    scripts = data.get("scripts") if isinstance(data, dict) else None
+    test_script = scripts.get("test") if isinstance(scripts, dict) else None
+    return isinstance(test_script, str) and bool(_NODE_TEST_SCRIPT.search(test_script))
+
+
 def _java_is_maven(root: Path) -> bool:
     """True only for a Maven build — the built-in test command is `mvn`.
 
@@ -484,7 +512,36 @@ _VITEST = replace(
     ),
 )
 
-_BY_KEY = {**_BY_KEY_SOURCE, "vitest": _VITEST}
+# Node's built-in runner has no coverage command to call: `--experimental-test-coverage`
+# is refused in NODE_OPTIONS, so it cannot be switched on underneath `npm test`, and
+# rebuilding the repo's `node --test <globs>` from its script string would run a suite the
+# repo did not write. c8 collects V8 coverage from every Node process `npm test` starts,
+# so the repo's own script runs unchanged and still writes `coverage/lcov.info`. c8's
+# default excludes keep `test/`, `tests/` and `*.test.*` out of the denominator.
+_NODE_TEST = replace(
+    _BY_KEY_SOURCE["javascript"],
+    label="JavaScript / TypeScript (node:test)",
+    test_command=(
+        "npx",
+        "--yes",
+        "c8",
+        "--reporter=lcov",
+        "--reporter=text-summary",
+        "npm",
+        "test",
+    ),
+)
+
+_BY_KEY = {**_BY_KEY_SOURCE, "vitest": _VITEST, "node-test": _NODE_TEST}
+
+
+def _javascript_variant(eco: Ecosystem, root: Path) -> Ecosystem:
+    """The jest row, or the variant the repo's own setup says it runs instead."""
+    if _js_uses_vitest(root):
+        return _VITEST
+    if _js_uses_node_test(root):
+        return _NODE_TEST
+    return eco
 
 
 def ecosystem(key: str) -> Ecosystem | None:
@@ -518,10 +575,10 @@ def for_repo(eco: Ecosystem, repo: str | Path = ".") -> Ecosystem:
     is what a consumer does when detection does not fire, and handing them the table's
     placeholder would run `bats --recursive tests` in a repo whose suite is elsewhere.
 
-    The jest/vitest swap deliberately does NOT live here. It picks a different *binary*,
-    ``--ecosystem vitest`` already exists for asking, and a consumer who forces
-    ``javascript`` today gets jest — moving the swap onto the forced path under a pinned
-    tag could turn a working repo's run into a failing one.
+    The jest/vitest/node:test swap deliberately does NOT live here. It picks a different
+    *binary*, ``--ecosystem vitest`` and ``--ecosystem node-test`` already exist for
+    asking, and a consumer who forces ``javascript`` today gets jest — moving the swap onto
+    the forced path under a pinned tag could turn a working repo's run into a failing one.
     """
     if eco.key == "shell":
         targets = _shell_test_targets(Path(repo))
@@ -549,7 +606,7 @@ def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
         if _has_marker(root, eco.markers) and (eco.confirm is None or eco.confirm(root))
     ]
     return [
-        for_repo(_VITEST if eco.key == "javascript" and _js_uses_vitest(root) else eco, root)
+        for_repo(_javascript_variant(eco, root) if eco.key == "javascript" else eco, root)
         for eco in found
     ]
 

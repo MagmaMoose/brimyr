@@ -33,7 +33,7 @@ code, which is the worse of the two.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript`, `dotnet`, `java`, `shell`, comma-separated. Each named ecosystem runs its own test command and the reports are merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash. |
+| `ecosystem` | string | *(auto-detect)* | Force one or more of `python`, `javascript` (jest), `vitest`, `node-test`, `dotnet`, `java`, `shell`, comma-separated. Each named ecosystem runs its own test command and the reports are merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash. |
 | `test_command` | string | *(detected)* | Replace the detected test command with a shell command string. |
 | `provision` | bool | `true` | Install the repo's test dependencies first, with the repo's own dependency manager (`uv run` / `poetry run` / `npm ci`), so a detected suite can actually be launched. See [Dependency provisioning](#dependency-provisioning). Ignored when `test_command` is set. |
 | `coverage_file` | string | *(empty)* | Ingest pre-made reports as `path[:format]`, comma-separated, and skip the test run. **Globs are expanded**, which is how you name `dotnet test`'s per-project `TestResults/*/coverage.cobertura.xml`. A pattern matching nothing is an error, not an empty result. Format is sniffed when you leave it off. |
@@ -50,6 +50,7 @@ Brimyr does it, using whatever the repo already declares:
 | `requirements*.txt` and nothing else | `uv run --with pytest-cov --with-requirements <file> <test command>` |
 | Poetry 1.x (`[tool.poetry]`, no `[project]`) | `poetry install`, then `poetry run <test command>` |
 | `package.json` with no `node_modules` | `npm ci` (falling back to `npm install`), then the detected command |
+| No `node` on PATH, and a `package.json` or a `.bats` file | `actions/setup-node` installs Node first: the version in `.nvmrc` or `.node-version`, otherwise the current LTS. A runner that already has Node keeps its own. |
 | Maven, .NET | nothing: `mvn` and `dotnet test` restore their own |
 | A bats suite with no `bats` on PATH | `npx --yes bats ...` |
 | A bats suite with `kcov` on PATH | the run is wrapped in `kcov`, writing Cobertura under `coverage/kcov/`. kcov is used when present and [never installed](shell.md). |

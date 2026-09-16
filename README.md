@@ -66,7 +66,7 @@ jobs:
 | --- | --- | --- |
 | `threshold` | `80` | Patch-coverage percentage that blocks below it. |
 | `quality` | `false` | Also gate on net-new quality findings, running Chargate as a nested step. |
-| `ecosystem` | auto-detected | Force one or more: `python`, `javascript`, `dotnet`, `java`, `shell`. |
+| `ecosystem` | auto-detected | Force one or more: `python`, `javascript` (jest), `vitest`, `node-test`, `dotnet`, `java`, `shell`. |
 | `mode` | `auto` | `auto` from the event · `pr` (diff gate) · `baseline`. |
 | `pr_comment` | `false` | Post one consolidated PR comment. Needs `pull-requests: write`. |
 | `sonar_url` | — | Set to export the trend to SonarQube. |

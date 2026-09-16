@@ -83,7 +83,7 @@ inputs:
   # ── Test run / coverage ──────────────────────────────────────────────────
   ecosystem:
     description: >-
-      Force ecosystem(s): comma-separated python|javascript|dotnet|java|shell
+      Force ecosystem(s): comma-separated python|javascript|vitest|node-test|dotnet|java|shell
       (default: auto-detect). Each one runs its OWN test command and the reports are
       merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash.
       `test_command` does not work that way: it replaces every ecosystem's command with
@@ -342,6 +342,56 @@ runs:
         "$BRIMYR_VENV/bin/python" -m pip install --disable-pip-version-check --quiet uv
         mkdir -p "$BRIMYR_TOOLS"
         ln -sf "$BRIMYR_VENV/bin/uv" "$BRIMYR_TOOLS/uv"
+
+    # The same gap one runtime over. Every JavaScript row runs through `npx`, and so does
+    # bats when it is not installed, but a self-hosted runner image need not ship Node at
+    # all: MagmaMoose/mcp's gate got `npx: not found` there and reported a broken run on a
+    # suite with 80 passing tests.
+    #
+    # Only when `node` is absent, so a consumer's own Node, and its version, always wins;
+    # the PATH entry setup-node leaves for later steps can then only add a Node, never
+    # replace one. The repo test is a deliberate SUPERSET of detect.py (a root
+    # `package.json`, or any `.bats` outside node_modules): a repo it wrongly includes
+    # pays for one Node download, a repo it wrongly excluded would get a red gate.
+    - name: Check for Node
+      id: node
+      if: ${{ inputs.provision == 'true' && inputs.test_command == '' && inputs.coverage_file == '' }}
+      shell: bash
+      env:
+        ECOSYSTEM_IN: ${{ inputs.ecosystem }}
+      run: |
+        set -euo pipefail
+        if command -v node >/dev/null 2>&1; then
+          echo "node already on PATH: $(command -v node)"
+          exit 0
+        fi
+        needed=false
+        forced="$(printf '%s' "$ECOSYSTEM_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+        if [ -n "$forced" ]; then
+          case ",$forced," in
+            *,javascript,*|*,vitest,*|*,node-test,*|*,shell,*) needed=true ;;
+          esac
+        elif [ -f package.json ] || find . -path ./.git -prune -o -name '*.bats' \
+            -not -path '*/node_modules/*' -print -quit | grep -q .; then
+          needed=true
+        fi
+        version_file=""
+        for f in .nvmrc .node-version; do
+          if [ -f "$f" ]; then version_file="$f"; break; fi
+        done
+        echo "needed=$needed" >> "$GITHUB_OUTPUT"
+        echo "version_file=$version_file" >> "$GITHUB_OUTPUT"
+
+    - name: Provision Node
+      if: ${{ steps.node.outputs.needed == 'true' }}
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        # The repo's own pin when it has one, otherwise the current LTS.
+        node-version: ${{ steps.node.outputs.version_file == '' && 'lts/*' || '' }}
+        node-version-file: ${{ steps.node.outputs.version_file }}
+        # Off: brimyr runs `npm ci` itself, and setup-node's post step would otherwise save
+        # an npm cache into the consumer's Actions cache quota.
+        package-manager-cache: 'false'
 
     # Without this the Sonar leg is a silent no-op: nothing installs a scanner, so every
     # run reported "skipped (sonar-scanner not found on PATH)" while the build stayed

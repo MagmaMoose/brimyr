@@ -1377,8 +1377,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="KEY",
         help=(
-            "Force an ecosystem (python|javascript|dotnet|java|shell) instead of "
-            "auto-detect. Repeatable."
+            "Force an ecosystem (python|javascript|vitest|node-test|dotnet|java|shell) "
+            "instead of auto-detect. Repeatable."
         ),
     )
     ci.add_argument(

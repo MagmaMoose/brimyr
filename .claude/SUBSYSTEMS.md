@@ -40,7 +40,7 @@ of them (forced intent is never downgraded to a skip).
   helpers), and bats-core's own checkout carries `test/*.bats`. Detect off those and the
   gate runs the framework's suite instead of the repo's.
 - **Two rows cannot be static, and `for_repo` is where they stop being.** JavaScript picks
-  jest or vitest from what the repo declares; shell can only be invoked once the search
+  jest, vitest or node:test from what the repo declares; shell can only be invoked once the search
   has found where the `.bats` files are. It must be applied to a FORCED `--ecosystem` too
   (`cli._collect_coverage`, `_resolved_ecosystems`) — forcing is what a consumer does when
   detection misses their layout, and the table's placeholder command looks in `tests/`.
@@ -69,6 +69,15 @@ of them (forced intent is never downgraded to a skip).
   directory holding *only* a `uv` symlink, APPENDED to PATH — the venv's own bin would
   shadow the consumer's `python` and `pip` for their entire test run, and a consumer's
   own `uv` must keep winning.
+- **`action.yml` installs Node when the runner has none.** Every JS row and a bats run
+  without `bats` go through `npx`; self-hosted images need not ship Node, and `npx: not
+  found` is a red gate on a green suite (MagmaMoose/mcp). Runs only when `node` is absent,
+  gated on a SUPERSET of detection (root `package.json` or any `.bats`): over-including
+  costs a download, under-including costs a red gate.
+- **A `node --test` suite runs as `c8 npm test`, never as `node --test` rebuilt.**
+  `--experimental-test-coverage` is refused in NODE_OPTIONS, and re-deriving the globs
+  from the script string runs a suite the repo did not write. c8 covers every Node
+  process `npm test` starts and excludes `tests/` by default.
 - **Never install into the ambient interpreter.** A gate has no business mutating the
   environment its caller's other steps use, and `brimyr local` has none mutating a
   developer's. Everything goes through the repo's own manager or an ephemeral env.
