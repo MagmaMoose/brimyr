@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from brimyr.detect import (
@@ -153,6 +155,59 @@ def test_jest_repo_is_untouched(tmp_path):
     found = detect_ecosystems(tmp_path)
     assert "jest" in found[0].command_str()  # nosec B101
     assert "vitest" not in found[0].command_str()  # nosec B101
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "node --test tests/*.test.mjs",
+        "node --test",
+        "node --import tsx --test 'tests/**/*.test.ts'",
+        "npm run build && node --test",
+        "NODE_ENV=test node --experimental-strip-types --test tests/",
+        "tsx --test",
+    ],
+)
+def test_a_node_test_script_is_run_under_c8_not_jest(tmp_path, script):
+    """Jest cannot run a `node:test` suite, so handing it one is a broken run on a green repo.
+
+    MagmaMoose/mcp: `node --test tests/*.test.mjs`, 80 passing tests, and a red gate.
+    """
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": script}}))
+    found = detect_ecosystems(tmp_path)
+    assert [e.key for e in found] == ["javascript"]  # nosec B101
+    assert found[0].command_str() == (  # nosec B101
+        "npx --yes c8 --reporter=lcov --reporter=text-summary npm test"
+    )
+    assert found[0].coverage_paths == ("coverage/lcov.info",)  # nosec B101
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "jest",
+        "node --test-reporter=spec tests/run.js",
+        "mocha --test",
+        "bun test",
+    ],
+)
+def test_other_test_scripts_keep_jest(tmp_path, script):
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": script}}))
+    assert "jest" in detect_ecosystems(tmp_path)[0].command_str()  # nosec B101
+
+
+def test_vitest_still_wins_over_a_node_test_script(tmp_path):
+    """Precedence is unchanged for a repo that already declares vitest."""
+    (tmp_path / "package.json").write_text(
+        '{"scripts": {"test": "node --test"}, "devDependencies": {"vitest": "^2"}}'
+    )
+    assert "vitest" in detect_ecosystems(tmp_path)[0].command_str()  # nosec B101
+
+
+def test_node_test_can_be_forced_and_javascript_still_means_jest(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "node --test"}}')
+    assert "c8" in for_repo(ecosystem("node-test"), tmp_path).command_str()  # nosec B101
+    assert "jest" in for_repo(ecosystem("javascript"), tmp_path).command_str()  # nosec B101
 
 
 def test_vitest_does_not_double_match_a_polyglot_repo(tmp_path):
