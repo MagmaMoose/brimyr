@@ -165,3 +165,50 @@ def test_no_ecosystem_defaults_off(make_report):
     """Trailing and defaulted, so every caller that predates the flag is unchanged."""
     decision = decide_gate(_patch(make_report, covered=8, total=10), 80.0)
     assert decision.no_ecosystem is False
+
+
+# ------------------- a suite that measures nothing is not a broken one -------------
+
+
+def test_no_coverage_passes_rather_than_erroring(make_report):
+    """The fourth reading of an empty report, and the second green one.
+
+    `no_ecosystem` is "there was nothing to run". This is "it ran, it passed, and this
+    ecosystem does not measure" — a bats suite on a runner with no kcov. Reporting it
+    as a broken run failed repos for owning bash.
+    """
+    decision = decide_gate(
+        _patch(make_report, covered=0, total=0), 80.0, no_coverage=True, unmeasured=("Shell",)
+    )
+    assert not decision.failed
+    assert not decision.broken
+    assert decision.no_coverage
+    assert decision.exit_code == EXIT_OK
+
+
+def test_a_broken_run_outranks_no_coverage(make_report):
+    """A suite that failed is red whether or not it could have measured anything."""
+    decision = decide_gate(
+        _patch(make_report, covered=0, total=0), 80.0, broken=True, no_coverage=True
+    )
+    assert decision.exit_code == EXIT_ERROR
+
+
+def test_an_unmeasured_half_never_softens_a_measured_shortfall(make_report):
+    """`dotnet,shell`: the shell half measures nothing, the .NET half measures 70%.
+
+    `unmeasured` is a label for the summary, never an input to the verdict. If it ever
+    becomes one, every repo with a bats suite gets an unfailable coverage gate.
+    """
+    decision = decide_gate(
+        _patch(make_report, covered=7, total=10), 80.0, min_lines=0, unmeasured=("Shell",)
+    )
+    assert decision.failed
+    assert decision.exit_code == EXIT_BLOCKED
+
+
+def test_no_coverage_defaults_off(make_report):
+    """Trailing and defaulted: every caller that predates the flag is unchanged."""
+    decision = decide_gate(_patch(make_report, covered=8, total=10), 80.0)
+    assert decision.no_coverage is False
+    assert decision.unmeasured == ()

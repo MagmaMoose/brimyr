@@ -82,7 +82,16 @@ inputs:
 
   # ── Test run / coverage ──────────────────────────────────────────────────
   ecosystem:
-    description: 'Force ecosystem(s): comma-separated python|javascript|dotnet|java (default: auto-detect).'
+    description: >-
+      Force ecosystem(s): comma-separated python|javascript|dotnet|java|shell
+      (default: auto-detect). Each one runs its OWN test command and the reports are
+      merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash.
+      `test_command` does not work that way: it replaces every ecosystem's command with
+      one, which is how forcing a bats run used to cost a repo its .NET coverage.
+      `shell` runs `bats` over the directories that hold the repo's `.bats` files, and
+      measures coverage only when `kcov` is installed on the runner. Brimyr does not
+      install kcov: a bats suite that passes and measures nothing is a PASS reported as
+      `skipped`, never a broken run.
     required: false
     default: ''
   test_command:
@@ -202,6 +211,9 @@ inputs:
       `quality` set (GO_GOLANGCI_LINT, JAVASCRIPT_ES, JAVA_PMD, PYTHON_RUFF,
       TYPESCRIPT_ES). A linter that emits no SARIF is invisible to the gate, and Chargate
       skips it by name with a reason rather than running it for nothing.
+      REPLACES the curated set rather than adding to it, so name the whole list. Shell
+      repos want `BASH_SHELLCHECK` in it: shellcheck is a valid MegaLinter key but is not
+      curated, and the curated set is Chargate's to change, not this action's.
     required: false
     default: ''
   quality_json_artifact_name:
@@ -224,7 +236,10 @@ outputs:
     description: 'Resolved run mode (pr | baseline).'
     value: ${{ steps.brimyr.outputs.mode }}
   gate_result:
-    description: 'pass | fail | error | skipped (no test suite detected).'
+    description: >-
+      pass | fail | error | skipped. `skipped` covers the two states where nothing was
+      gated and neither is a measurement: no test suite was detected, or the suites that
+      ran measure no coverage at all (bats without kcov).
     value: ${{ steps.brimyr.outputs.gate_result }}
   patch_coverage:
     description: 'Patch coverage percentage (covered changed executable lines / total).'

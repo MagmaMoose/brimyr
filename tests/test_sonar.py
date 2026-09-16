@@ -132,10 +132,13 @@ class TestDotnetStrategy:
         assert "--no-incremental" in eco.sonar_build_command  # nosec B101
 
     def test_every_other_ecosystem_stays_a_post_step(self):
-        from brimyr.detect import ECOSYSTEMS, SonarStrategy
+        from brimyr.detect import ECOSYSTEMS, SonarStrategy, ecosystem
 
         cli = [e.key for e in ECOSYSTEMS if e.sonar_strategy is SonarStrategy.CLI]
-        assert set(cli) == {"python", "javascript", "java"}  # nosec B101
+        # `shell` is CLI-strategy but has no `sonar_property`: Sonar has no importer for
+        # shell coverage, so there is nothing for a post-step to hand it.
+        assert set(cli) == {"python", "javascript", "java", "shell"}  # nosec B101
+        assert not ecosystem("shell").sonar_property  # nosec B101
 
 
 class TestEscapeHatchFeedsSonar:

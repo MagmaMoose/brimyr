@@ -17,6 +17,7 @@ nav:
   - Setup & usage: setup.md
   - .NET solutions: dotnet.md
   - Java / JVM: java.md
+  - Shell / bats: shell.md
   - PR comment: pr-comment.md
   - HTML report: html-report.md
   - SonarQube: sonarqube.md

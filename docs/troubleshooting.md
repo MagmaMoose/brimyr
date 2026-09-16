@@ -105,12 +105,26 @@ failing it would mean a permanently red check on a gate it can never satisfy.
 purpose. Detection needs one of:
 
 - `pyproject.toml` / `setup.py` / `setup.cfg` / `requirements.txt` / `tox.ini` **plus a
-  real Python test signal**: a `test_*.py` or `*_test.py` file anywhere outside
-  `.venv` / `node_modules` / other vendored directories, or a pytest section
-  (`[tool.pytest.ini_options]`, `[pytest]`, `[tool:pytest]`).
+  real Python test signal**: a `test_*.py` or `*_test.py` file belonging to *this*
+  project, outside `.venv` / `node_modules` / other vendored directories, or a pytest
+  section (`[tool.pytest.ini_options]`, `[pytest]`, `[tool:pytest]`).
+
+  "Belonging to this project" means no nested project sits between the repo root and
+  the test file. A subdirectory with its own `pyproject.toml` / `setup.py` /
+  `setup.cfg` (a separate deployable such as `broker/`) is a different project whose
+  dependencies are not in this environment, so `pytest` at the root would collect its
+  files and then fail importing them. Depth alone is fine: `backend/tests/test_api.py`
+  with no `backend/pyproject.toml` is still this repo's suite.
+
+  If your tests really do live in a nested project and you want them gated from the
+  root, add a root pytest section pointing at them (`testpaths`): an explicit config
+  wins outright. Or set `ecosystem:` plus a `test_command:` that enters the directory.
 - `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
 - `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
 - `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
+- A real, non-vendored `*.bats` file for [shell](shell.md). A `tests/` directory on
+  its own is never enough, and a vendored bats-core submodule under `test/bats` is
+  deliberately ignored.
 
 Force it with `ecosystem:`, or skip detection entirely with `coverage_file:`. A forced
 `ecosystem:` that then fails is still an error: explicit intent is never downgraded to
@@ -151,6 +165,54 @@ locally to see the real error.
 That's the broken-run rule. The suite failed, produced no coverage file, or wrote something
 unparseable. Look at the test output above the Brimyr step: the underlying failure is there,
 and Brimyr is refusing to convert it into a coverage number.
+
+The one exception is an ecosystem that cannot produce coverage in the first place. A bats
+suite emits nothing without `kcov`, so a passing one is a pass, not a broken run. See
+[Shell / bats](shell.md).
+
+## `--repo ... is not a directory`
+
+The path given to `--repo` (or the `repo` the action ran in) does not exist, or is a
+file. Exit 2, and deliberately not a green skip: detection looks for marker files, a
+path that is not there has none, and before this was checked a mistyped `--repo`
+reported "no test suite detected" and passed the build.
+
+## `could not run git ...`
+
+Git could not be started at all, which is different from git running and failing. Either
+it is not installed in the job (a slim container without it), or the working directory is
+unreadable. Exit 2, naming the path. Nothing was measured.
+
+## `could not write the ... JSON`
+
+The `--json-out` or `--quality-json-out` path could not be written: a permission problem,
+a read only filesystem, or a component of the path that is a file rather than a directory.
+Missing parent directories are created, so those are not a cause.
+
+This is a **warning and nothing more**. The gate is already decided by the time the
+artifact is written, so the run keeps its own exit code and the summary and PR comment
+still go out; only the file is missing. The artifact upload in `action.yml` is guarded on
+the file existing, so nothing downstream reads a stale one.
+
+## `Tests ran, but no coverage was measured`
+
+Not an error, and not 0%. The suites that ran passed, and none of them measures coverage:
+today that means [bats without `kcov`](shell.md). `gate_result` is `skipped`, the exit
+code is `0`, and the summary replaces the coverage table so the run cannot be mistaken for
+a well tested one.
+
+Install `kcov` on the runner to turn it into a measurement:
+
+```yaml
+- run: sudo apt-get update && sudo apt-get install -y kcov
+```
+
+## `Not everything was measured`
+
+A polyglot run where one ecosystem measured and another did not, for example `dotnet,shell`
+on a runner with no `kcov`. The percentage above the warning is real, but it covers only
+the measured half: a file the coverage report never mentions contributes nothing to the
+denominator, so the unmeasured half's changed lines are absent rather than uncovered.
 
 ## Small pull requests aren't being gated
 

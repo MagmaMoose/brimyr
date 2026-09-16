@@ -15,6 +15,7 @@ reports. Anything here can be overridden from the action (``test_command`` /
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -75,6 +76,18 @@ class Ecosystem:
     # a guard against markers that don't imply a real test run (e.g. a package.json
     # shipped only for frontend assets). Bypassed by an explicit ``--ecosystem``.
     confirm: Callable[[Path], bool] | None = None
+    # True when a PASSING test run legitimately produces no coverage file at all, so
+    # its absence is a measurement gap rather than a broken run. Off for every
+    # ecosystem whose runner instruments as it goes (pytest, jest, coverlet, JaCoCo):
+    # there, no report means the run broke, and saying otherwise would turn a real
+    # failure — a .NET test project with no `coverlet.collector` — into a green gate.
+    # On for `shell`, where coverage needs kcov, kcov is installed nowhere by default,
+    # and a bats suite running without it is the NORMAL outcome, not a broken one.
+    coverage_optional: bool = False
+    # Why this ecosystem may measure nothing, said in the summary next to the gap.
+    # An unmeasured half has to name itself, or a repo whose shell scripts are simply
+    # not in the denominator reads as a repo whose shell scripts are covered.
+    coverage_note: str = ""
 
     def command_str(self) -> str:
         return " ".join(self.test_command)
@@ -105,6 +118,10 @@ _VENDOR_DIRS = frozenset(
 #: Where a pytest configuration lives, and the section that makes it one. `tox.ini` and
 #: `setup.cfg` are also bare python MARKERS, so their presence alone proves nothing; the
 #: section inside is the signal.
+# A directory carrying one of these is a Python project in its own right. Used to tell
+# "this repo's tests" from "a nested deployable's tests" — see _owned_by_root.
+_PYTHON_PROJECT_MARKERS: tuple[str, ...] = ("pyproject.toml", "setup.py", "setup.cfg")
+
 _PYTEST_CONFIG_SECTIONS: tuple[tuple[str, str], ...] = (
     ("pyproject.toml", "[tool.pytest.ini_options]"),
     ("pytest.ini", "[pytest]"),
@@ -127,6 +144,17 @@ def _python_has_test_signal(root: Path) -> bool:
     Exactly the reasoning behind :func:`_js_has_test_signal` and :func:`_java_is_maven`;
     python was simply the one marker set that never got the guard. Bypassed by an
     explicit ``--ecosystem python``, which is the escape hatch for a layout this misses.
+
+    The file fallback only counts tests belonging to the ROOT project. A nested
+    deployable with its own ``pyproject.toml`` (``broker/tests/``) is a different
+    project whose dependencies are not in this environment, so `pytest` at the root
+    collects those files and dies importing them. Diatreme is the live case: bash and
+    TypeScript, a root ``pyproject.toml`` holding nothing but ``[tool.semantic_release]``,
+    and its only Python under ``broker/``. Recursion itself is kept — a ``src/`` layout
+    with ``tests/`` at the root, or tests beside the code, must still be found.
+
+    An explicit root pytest config still wins outright and is checked first: a repo that
+    configures ``testpaths`` has *said* pytest runs from the root, whatever the layout.
     """
     for name, section in _PYTEST_CONFIG_SECTIONS:
         try:
@@ -134,19 +162,52 @@ def _python_has_test_signal(root: Path) -> bool:
                 return True
         except OSError:
             continue
-    return _has_test_file(root, ("test_*.py", "*_test.py"))
+    return _has_test_file(
+        root, ("test_*.py", "*_test.py"), nested_project_markers=_PYTHON_PROJECT_MARKERS
+    )
 
 
-def _has_test_file(root: Path, patterns: tuple[str, ...]) -> bool:
+def _owned_by_root(root: Path, match: Path, markers: tuple[str, ...]) -> bool:
+    """True if no NESTED project of its own sits between ``root`` and ``match``.
+
+    A test file under a directory that declares its own ``pyproject.toml`` belongs to
+    that project, not this one. Its dependencies live in that project's environment,
+    which the root's does not have, so `pytest` at the root collects it and then dies
+    importing it — the empty report the broken-run rule turns red.
+
+    Note the root's OWN marker is skipped, not treated as nested: every Python repo
+    has one, and it is what makes these the root project's tests in the first place.
+    """
+    for parent in match.relative_to(root).parents:
+        if parent == Path("."):
+            continue
+        if any((root / parent / marker).is_file() for marker in markers):
+            return False
+    return True
+
+
+def _has_test_file(
+    root: Path,
+    patterns: tuple[str, ...],
+    *,
+    nested_project_markers: tuple[str, ...] = (),
+) -> bool:
     """True as soon as ONE non-vendored file matches, without walking the rest.
 
     Short-circuits, so the common case (a repo that has tests) is cheap; only a repo
     with none pays for the full walk, and that is the answer we need to be sure of.
+
+    ``nested_project_markers`` additionally requires a match to belong to the ROOT
+    project — see :func:`_owned_by_root`. Off by default so this stays a plain
+    "is there a test file" question for any other caller.
     """
     for pattern in patterns:
         for match in root.glob(f"**/{pattern}"):
-            if _VENDOR_DIRS.isdisjoint(match.relative_to(root).parts):
-                return True
+            if not _VENDOR_DIRS.isdisjoint(match.relative_to(root).parts):
+                continue
+            if nested_project_markers and not _owned_by_root(root, match, nested_project_markers):
+                continue
+            return True
     return False
 
 
@@ -215,6 +276,69 @@ def _java_is_maven(root: Path) -> bool:
     guess that breaks their pipeline.
     """
     return (root / "pom.xml").is_file()
+
+
+#: Directories a bats search must never descend into, on top of :data:`_VENDOR_DIRS`.
+#: The conventional bats layout VENDORS ITS OWN FRAMEWORK — `test/bats` is bats-core as a
+#: submodule, `test/test_helper/bats-support` and friends are its helper libraries — and
+#: bats-core's checkout carries its own `test/*.bats` suite. Without this, detection finds
+#: those, hands them to `bats`, and the gate runs the test suite of the framework instead
+#: of the repo's. A repo that genuinely keeps its own tests in a directory called `bats`
+#: pays for that with `test_command`.
+_BATS_VENDOR_DIRS = frozenset(
+    {
+        "bats",
+        "bats-core",
+        "test_helper",
+        "bats-support",
+        "bats-assert",
+        "bats-file",
+        "bats-mock",
+        "bats-detik",
+    }
+)
+
+#: The invocation; the targets are discovered per repo and appended. `--recursive` is
+#: what makes a directory argument mean "every .bats under here".
+_BATS_COMMAND: tuple[str, ...] = ("bats", "--recursive")
+
+
+def _shell_test_targets(root: Path) -> tuple[str, ...]:
+    """The directories (and root-level files) to hand `bats`, shallowest-first.
+
+    A `*.bats` file IS the confirming predicate, not merely a marker: the marker set has
+    to include `test`/`tests`/`*/tests` to find a suite that is not at the root, and
+    those directory names are shipped by practically every repo on earth. `pyproject.toml`
+    is the cautionary tale — a marker with no confirming predicate detected Python in
+    every repo that had a docs build, ran `pytest --cov`, and turned it red. Here the
+    marker only decides whether it is worth looking; this decides.
+
+    Immediate parents rather than a single root: passing `.` would make `--recursive`
+    walk `node_modules` and every vendored checkout. A directory that is a descendant of
+    another target is dropped, because `--recursive` already covers it, and a root-level
+    `.bats` file is passed as itself for the same reason `.` is not used.
+    """
+    dirs: set[str] = set()
+    files: set[str] = set()
+    for match in sorted(root.glob("**/*.bats")):
+        parts = match.relative_to(root).parts
+        if not _VENDOR_DIRS.isdisjoint(parts) or not _BATS_VENDOR_DIRS.isdisjoint(parts[:-1]):
+            continue
+        parent = match.parent.relative_to(root).as_posix()
+        if parent == ".":
+            files.add(match.name)
+        else:
+            dirs.add(parent)
+    # `--recursive` already descends, so a nested target would run the same file twice.
+    pruned = sorted(
+        d for d in dirs if not any(other != d and d.startswith(f"{other}/") for other in dirs)
+    )
+    return (*pruned, *sorted(files))
+
+
+def _shell_has_bats(root: Path) -> bool:
+    """True only if a real, non-vendored `.bats` file exists — see :func:`_shell_test_targets`."""
+    return bool(_shell_test_targets(root))
 
 
 # Built-in ecosystems. Order is the detection/run order for polyglot repos.
@@ -311,6 +435,33 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         sonar_required_props=("sonar.java.binaries",),
         confirm=_java_is_maven,
     ),
+    Ecosystem(
+        key="shell",
+        label="Shell",
+        # Deliberately over-broad, and safe only because `confirm` is strict: a bats
+        # suite lives under `test/`, `tests/` or `scripts/tests/` far more often than at
+        # the repo root, and `_has_marker` globs the root only. A `tests` directory means
+        # "look for a .bats file", never "this is a shell repo".
+        markers=("*.bats", "test", "tests", "*/tests"),
+        # Placeholder: `for_repo` replaces the target list with the directories that
+        # actually hold .bats files. Kept as a sane default so a forced `--ecosystem
+        # shell` on a layout the search misses still runs something nameable.
+        test_command=(*_BATS_COMMAND, "tests"),
+        # kcov is the only realistic bats coverage tool and it writes Cobertura, one
+        # per traced binary plus a merged one. Brimyr never installs it (see
+        # `provision._shell_plan`), so these paths exist only when the runner already
+        # has kcov — which is why this ecosystem is `coverage_optional`.
+        coverage_format=CoverageFormat.COBERTURA,
+        coverage_paths=("coverage/kcov/**/cobertura.xml",),
+        # No `sonar_property`: SonarQube has no importer for shell coverage, and
+        # guessing one would upload the report under a property Sonar silently ignores.
+        coverage_optional=True,
+        coverage_note=(
+            "shell coverage needs kcov, which brimyr does not install; install it in the "
+            "job to measure bash"
+        ),
+        confirm=_shell_has_bats,
+    ),
 )
 
 _BY_KEY_SOURCE = {eco.key: eco for eco in ECOSYSTEMS}
@@ -337,7 +488,11 @@ _BY_KEY = {**_BY_KEY_SOURCE, "vitest": _VITEST}
 
 
 def ecosystem(key: str) -> Ecosystem | None:
-    """Look up a built-in ecosystem by key (python | javascript | dotnet | java)."""
+    """Look up a built-in ecosystem by key (python | javascript | dotnet | java | shell).
+
+    The table's own row, untailored. Callers holding a repo path should pass the result
+    through :func:`for_repo`.
+    """
     return _BY_KEY.get(key.strip().lower())
 
 
@@ -349,6 +504,35 @@ def _has_marker(root: Path, markers: tuple[str, ...]) -> bool:
         elif (root / marker).exists():
             return True
     return False
+
+
+def for_repo(eco: Ecosystem, repo: str | Path = ".") -> Ecosystem:
+    """Fill in the part of a row that only the checkout can supply.
+
+    The table says what an ecosystem IS; `shell` is the one row whose *arguments* are
+    unknowable from it, because `bats` has to be pointed at the directories that hold
+    the repo's `.bats` files.
+
+    Applied to a FORCED ``--ecosystem`` as well as to detection, which is the whole
+    reason it is a function rather than a line inside :func:`detect_ecosystems`. Forcing
+    is what a consumer does when detection does not fire, and handing them the table's
+    placeholder would run `bats --recursive tests` in a repo whose suite is elsewhere.
+
+    The jest/vitest swap deliberately does NOT live here. It picks a different *binary*,
+    ``--ecosystem vitest`` already exists for asking, and a consumer who forces
+    ``javascript`` today gets jest — moving the swap onto the forced path under a pinned
+    tag could turn a working repo's run into a failing one.
+    """
+    if eco.key == "shell":
+        targets = _shell_test_targets(Path(repo))
+        if targets:
+            # Quoted here and not in the search, which returns paths as data. The command
+            # is handed to a shell, and a discovered path is the one part of it that
+            # nobody wrote by hand: a directory with a space in it would otherwise arrive
+            # as two arguments and the run would fail on a name. `shlex.quote` leaves an
+            # ordinary path exactly as it was.
+            return replace(eco, test_command=(*_BATS_COMMAND, *map(shlex.quote, targets)))
+    return eco
 
 
 def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
@@ -364,7 +548,10 @@ def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
         for eco in ECOSYSTEMS
         if _has_marker(root, eco.markers) and (eco.confirm is None or eco.confirm(root))
     ]
-    return [_VITEST if eco.key == "javascript" and _js_uses_vitest(root) else eco for eco in found]
+    return [
+        for_repo(_VITEST if eco.key == "javascript" and _js_uses_vitest(root) else eco, root)
+        for eco in found
+    ]
 
 
 def locate_coverage_files(eco: Ecosystem, repo: str | Path = ".") -> list[Path]:

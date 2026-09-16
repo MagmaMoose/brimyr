@@ -6,7 +6,7 @@ Canonical agent context. `AGENTS.md` restates it — **edit both together.**
 the worse of the two. Chargate is the *security* sibling; the split is the subject, not
 the tool.
 
-**Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java), installs its
+**Patch coverage** — detects the ecosystem (Python / JS-TS / .NET / Java / shell), installs its
 deps through the repo's own manager (`provision.py`), runs its tests **with coverage
 on**, gates **only on the lines the diff changed** (diff-cover, 80%); pre-existing
 uncovered code never blocks. **Net-new quality** — brimyr does not lint: it calls

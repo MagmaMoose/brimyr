@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from brimyr.cli import main
+from brimyr.gate import EXIT_BLOCKED, EXIT_ERROR
 
 
 def _git(repo, *args):
@@ -880,3 +881,448 @@ def test_ci_reports_which_environment_the_number_came_from(repo, tmp_path, capsy
 
     assert code == 0
     assert "Python: `uv` is not on PATH" in capsys.readouterr().err
+
+
+# ------------- a setup mistake is exit 2, never a coverage verdict -------------
+#
+# Exit 1 is this tool's word for "patch coverage below threshold" and exit 2 is
+# "broken run / setup error". Everything in this section is about a setup mistake that
+# used to arrive as one of the other two.
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["coverage", "--coverage-file", "cov.xml", "--base", "main"],
+        ["ci", "--mode", "pr", "--base", "main"],
+        ["ci", "--mode", "baseline"],
+        ["local"],
+    ],
+    ids=["coverage", "ci-pr", "ci-baseline", "local"],
+)
+def test_a_repo_path_that_does_not_exist_is_never_a_green_gate(argv, tmp_path, capsys):
+    """The traceback was not the worst of it.
+
+    `brimyr ci --repo /typo` found no marker files -- there is no directory to find them
+    in -- and reported the `no ecosystem detected` skip: exit 0, gate GREEN, on a path
+    that does not exist. A mistyped input laundered into "this repo has no tests" is the
+    vacuous pass the whole tool is built to refuse. `coverage` and `local` had the other
+    half of it: a raw FileNotFoundError traceback and exit 1, which CI reads as the pull
+    request's coverage being too low.
+    """
+    missing = tmp_path / "nope"
+    code = main([*argv, "--repo", str(missing)])
+
+    assert code == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "is not a directory" in err
+    assert "setup error" in err
+    assert "Traceback" not in err
+
+
+def test_a_repo_pointing_at_a_file_is_rejected_too(tmp_path, capsys):
+    """`is_dir`, not `exists`: a file fails identically everywhere `--repo` is used."""
+    target = tmp_path / "a-file"
+    target.write_text("")
+    assert main(["ci", "--mode", "baseline", "--repo", str(target)]) == EXIT_ERROR
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_the_default_repo_is_never_rejected(repo):
+    """Guards the guard. `--repo` defaults to `.`, so a check that could reject the
+    default would fail every run on the fleet rather than only the mistyped ones."""
+    repo_dir, _base = repo
+    monkey = pytest.MonkeyPatch()
+    monkey.chdir(repo_dir)
+    try:
+        assert main(["ci", "--mode", "baseline"]) == 0
+    finally:
+        monkey.undo()
+
+
+def test_local_reports_a_git_that_cannot_run_as_a_setup_error(tmp_path, capsys):
+    """The conversion happens in `cmd_local`, so the module-level test cannot see it.
+
+    `resolve_local_base` raising `GitError` only becomes exit 2 because `cmd_local`
+    catches it; without that the error leaves `main()`, the console script prints a
+    traceback, and the process exits **1** -- the code that means "patch coverage below
+    threshold". The `--repo` guard cannot cover this one: the directory here is real,
+    and it is git that cannot start.
+    """
+    import subprocess as sp
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(
+        sp, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError(2, "nope", "git"))
+    )
+    try:
+        code = main(["local", "--repo", str(tmp_path)])
+    finally:
+        monkey.undo()
+
+    assert code == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "could not run" in err
+    assert "could not infer a base branch" not in err, "that advice cannot install git"
+
+
+def test_lint_has_no_repo_and_is_unaffected(tmp_path):
+    """The check reads an attribute that only some subparsers define. `lint` takes no
+    `--repo`, and must not start failing because the guard assumed one."""
+    counts = tmp_path / "counts.json"
+    counts.write_text(_counts_json())
+    assert main(["lint", "--counts", str(counts), "--quiet"]) == 0
+
+
+def _counts_json():
+    import json
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "net_new_count": 0,
+            "total_count": 0,
+            "pre_existing_count": 0,
+            "suppressed_count": 0,
+            "per_level_net_new": {},
+            "per_level_total": {},
+        }
+    )
+
+
+# ------------- an artifact that cannot be written costs a file, not the verdict -----
+
+
+def test_a_failed_artifact_write_does_not_lose_the_verdict(repo, tmp_path, capsys):
+    """The gate is already decided by the time the JSON is written.
+
+    Raising there cost the summary, the PR comment, the step outputs AND the exit code
+    -- all of them computed correctly -- to report that a file could not be filed. It
+    exited 1, which is indistinguishable from the coverage having been too low.
+    """
+    repo_dir, base = repo
+    cov = tmp_path / "cov.xml"
+    _cobertura(cov, {4: 1, 5: 0})  # a real 50% -> the gate must still say "fail"
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("")
+
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(cov),
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+            "--json-out",
+            str(blocked / "out.json"),
+        ]
+    )
+
+    assert code == EXIT_BLOCKED, "the gate's own verdict, not the writer's"
+    err = capsys.readouterr().err
+    assert "could not write" in err
+    assert "verdict below is unaffected" in err
+    assert "BELOW threshold" in err, "the summary still has to be produced"
+
+
+def test_the_artifact_directory_is_created(repo, tmp_path):
+    """`--json-out reports/x.json` is a request to put a file there; refusing over the
+    directory half of that request helps nobody."""
+    import json
+
+    repo_dir, base = repo
+    cov = tmp_path / "cov.xml"
+    _cobertura(cov, {4: 1, 5: 1})
+    out = tmp_path / "made" / "up" / "out.json"
+
+    assert (
+        main(
+            [
+                "coverage",
+                "--coverage-file",
+                str(cov),
+                "--base",
+                base,
+                "--repo",
+                str(repo_dir),
+                "--json-out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(out.read_text())["gate_result"] == "pass"
+
+
+# ------------- one workflow command, one line -------------
+
+
+def test_an_annotation_is_a_single_line(monkeypatch, capsys):
+    """GitHub parses one workflow command PER LINE.
+
+    A raw newline ended the command, so everything after the first line stopped being an
+    annotation and became ordinary log output -- and the messages that reach `_warn` are
+    exactly the ones that carry newlines, being built from a failed subprocess's stderr.
+    The multi-line diagnostic the warning exists to surface was the part being dropped.
+    """
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("SonarQube: failed:\nERROR: second line\nERROR: third line")
+
+    err = capsys.readouterr().err.rstrip("\n")
+    assert "\n" not in err
+    assert err.startswith("::warning::")
+    assert err.count("%0A") == 2
+    assert "second line" in err and "third line" in err
+
+
+def test_a_literal_percent_survives_the_annotation(monkeypatch, capsys):
+    """`%` has to be escaped FIRST or the `%` of a just-written `%0A` is escaped again
+    and the annotation shows `%250A` instead of a line break."""
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("coverage fell to 50% off\nsecond line")
+
+    err = capsys.readouterr().err
+    assert "50%25 off" in err
+    assert "%0A" in err
+    assert "%250A" not in err
+
+
+def test_a_carriage_return_is_escaped_too(monkeypatch, capsys):
+    """A Windows-built tool's stderr ends its lines with \\r\\n, and a bare \\r ends a
+    workflow command just as a \\n does."""
+    from brimyr.cli import _warn
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _warn("first\r\nsecond")
+
+    assert capsys.readouterr().err.rstrip("\n") == "::warning::first%0D%0Asecond"
+
+
+def test_the_terminal_warning_keeps_its_real_newlines(monkeypatch, capsys):
+    """Escaping is Actions-only: `%0A` is unreadable noise in a terminal, where a
+    newline is simply a newline."""
+    from brimyr.cli import _warn
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _warn("first\nsecond with 50% off")
+
+    err = capsys.readouterr().err
+    assert err == "brimyr: warning: first\nsecond with 50% off\n"
+
+
+# ------------- a suite that measures nothing runs the whole flow green -------------
+
+
+def _shell_outcome(**kw):
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome
+
+    return RunOutcome(ecosystem("shell"), 0, (), None, unmeasured=True, **kw)
+
+
+def test_ci_on_a_bats_only_repo_passes_and_says_nothing_was_measured(
+    repo, tmp_path, capsys, monkeypatch
+):
+    """End to end, the failure that made `tests.yml` necessary.
+
+    `bats` emits no coverage, so `runner` found no report, `cli` called it a BROKEN test
+    run and exited 2 on a suite that passed. Verified live in the consuming org on
+    Prlg.iSuite.iBeheer, which was red for exactly this shape.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "BROKEN" not in err
+    assert "no coverage was measured" in err
+    assert json.loads(out.read_text())["unmeasured"] == ["Shell"]
+
+
+def test_ci_reports_an_unmeasured_run_as_skipped_not_as_a_pass(repo, tmp_path, monkeypatch):
+    """`gate_result` has to keep the states apart. "checked and clean" and "nothing was
+    measured" reaching a downstream `if` as the same word is how a dashboard ends up
+    counting an unmeasured repo as a covered one."""
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    outputs = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    repo_dir, base = repo
+
+    assert (
+        main(
+            ["ci", "--mode", "pr", "--ecosystem", "shell", "--base", base, "--repo", str(repo_dir)]
+        )
+        == 0
+    )
+    written = outputs.read_text()
+    assert "gate_result=skipped" in written
+    assert "gate_failed=false" in written
+
+
+def test_ci_still_gates_the_measured_half_of_a_polyglot_repo(repo, tmp_path, monkeypatch):
+    """The shell half measuring nothing must not switch the .NET gate off.
+
+    A repo that runs `dotnet,shell` still fails below the threshold on its .NET files —
+    otherwise adding a bats suite silently buys an unfailable coverage gate.
+    """
+    from brimyr import cli as cli_mod
+    from brimyr.coverage.model import CoverageBuilder
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome, RunResult
+
+    builder = CoverageBuilder()
+    builder.record("a.py", 4, 1)
+    builder.record("a.py", 5, 0)  # 50% of the changed lines
+    measured = RunOutcome(ecosystem("dotnet"), 0, (), builder.build())
+    monkeypatch.setattr(
+        cli_mod, "run_tests", lambda *a, **k: RunResult((measured, _shell_outcome()))
+    )
+
+    repo_dir, base = repo
+    code = main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "dotnet",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+        ]
+    )
+    assert code == 1
+
+
+def test_the_json_artifact_agrees_with_the_action_output_about_an_unmeasured_run(
+    repo, tmp_path, monkeypatch
+):
+    """Two consumers of one verdict must not read it differently.
+
+    `gate_result` is `skipped` on the step output; the JSON artifact saying `pass` for
+    the same run would let a dashboard count an unmeasured repo as a covered one.
+    """
+    import json
+
+    from brimyr import cli as cli_mod
+    from brimyr.runner import RunResult
+
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((_shell_outcome(),)))
+    repo_dir, base = repo
+    out = tmp_path / "out.json"
+    main(
+        [
+            "ci",
+            "--mode",
+            "pr",
+            "--ecosystem",
+            "shell",
+            "--base",
+            base,
+            "--repo",
+            str(repo_dir),
+            "--json-out",
+            str(out),
+        ]
+    )
+
+    assert json.loads(out.read_text())["gate_result"] == "skipped"
+
+
+# ---------------------- `--help` has to survive its own prose ----------------------
+
+
+def _every_parser():
+    """The root parser and every subparser, discovered rather than listed.
+
+    Enumerated from the parser itself so a subcommand added tomorrow is covered the day
+    it is added — a hardcoded list of names is a regression test that stops testing the
+    thing it was written for.
+    """
+    import argparse
+
+    from brimyr.cli import build_parser
+
+    root = build_parser()
+    yield "brimyr", root
+    for action in root._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            yield from action.choices.items()
+
+
+def test_every_subcommands_help_renders():
+    """`brimyr ci --help` used to die with `TypeError: %c requires int or char`.
+
+    argparse expands `%(default)s` by running `help % params` over EVERY help string, so
+    one literal `%` anywhere turns the whole subcommand's help into a traceback. This
+    repo writes "0% coverage" in prose constantly, which makes that a standing hazard
+    rather than a one-off slip — and nothing exercised `--help`, so it shipped.
+
+    Rendering is the assertion. It covers `usage=` (formatted unconditionally) and a
+    `description`/`epilog` carrying `%(prog)` as well, which a grep for `%` would have
+    to know to look for.
+    """
+    for name, parser in _every_parser():
+        assert parser.format_help(), f"{name} rendered an empty help"
+
+
+def test_the_subcommands_are_all_discovered():
+    """Guards the guard: if the discovery above silently found nothing, every assertion
+    in this section would pass over an empty loop."""
+    found = {name for name, _ in _every_parser()}
+    assert {"brimyr", "coverage", "ci", "local", "lint", "version"} <= found
+
+
+@pytest.mark.parametrize("subcommand", ["coverage", "ci", "local", "lint", "version"])
+def test_help_exits_cleanly_through_the_real_entry_point(subcommand, capsys):
+    """`format_help()` alone would not catch a crash in argparse's exit path, and the
+    traceback users actually hit came from `main()`."""
+    with pytest.raises(SystemExit) as exit_info:
+        main([subcommand, "--help"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out
+
+
+def test_the_percent_that_broke_it_still_reads_as_a_percent():
+    """The fix is `%%` in source, which must render as a single `%`. Deleting the
+    percent sign would also make `--help` work, and would quietly change the sentence
+    that tells people a timeout is not 0% coverage."""
+    (_, ci) = next((n, p) for n, p in _every_parser() if n == "ci")
+    assert "never 0% coverage" in ci.format_help()

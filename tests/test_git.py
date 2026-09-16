@@ -167,3 +167,40 @@ def test_no_merge_base_still_diffs_when_asked(tmp_path: Path):
 
     index = bgit.compute_changed_lines(head_sha, orphan_sha, repo, use_merge_base=False)
     assert index.get("b.py") is not None  # nosec B101
+
+
+def test_a_git_that_cannot_run_is_a_git_error_not_an_oserror(monkeypatch, tmp_path):
+    """`subprocess.run` raises before git starts when the binary is missing.
+
+    An `OSError` is not a `GitError`, so it sailed past every `except GitError` in the
+    CLI, printed a traceback and exited **1** -- and 1 is this tool's word for "patch
+    coverage below threshold". A container without git was reported to CI as the pull
+    request's coverage being too low.
+    """
+    import subprocess as sp
+
+    from brimyr import git as bgit
+
+    def no_git(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr(sp, "run", no_git)
+    with pytest.raises(bgit.GitError) as exc_info:
+        bgit.compute_changed_lines("main", "HEAD", tmp_path)
+    assert "could not run" in str(exc_info.value)
+    assert "Nothing was measured" in str(exc_info.value)
+
+
+def test_a_missing_working_directory_names_the_directory(monkeypatch, tmp_path):
+    """The message has to say WHICH path, or a `--repo` typo reads as a broken runner."""
+    import subprocess as sp
+
+    from brimyr import git as bgit
+
+    def no_cwd(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", str(tmp_path / "nope"))
+
+    monkeypatch.setattr(sp, "run", no_cwd)
+    with pytest.raises(bgit.GitError) as exc_info:
+        bgit.compute_changed_lines("main", "HEAD", tmp_path / "nope")
+    assert str(tmp_path / "nope") in str(exc_info.value)

@@ -35,6 +35,7 @@ gate is computed locally from the coverage file and never talks to SonarQube.
 | JavaScript / TypeScript | `sonar-scanner` (after the tests) | `sonar.javascript.lcov.reportPaths` |
 | Java | `sonar-scanner` (after the tests) | `sonar.coverage.jacoco.xmlReportPaths` |
 | .NET | `dotnet sonarscanner`, **wrapping the build** | `sonar.cs.cobertura.reportsPaths` |
+| Shell | `sonar-scanner` (after the tests) | none: Sonar has no importer for shell coverage, so nothing is uploaded for it |
 
 .NET is the one that can't follow the same shape. SonarSource documents that the
 SonarScanner CLI doesn't support C# or VB.NET at all, because those issues come from Roslyn

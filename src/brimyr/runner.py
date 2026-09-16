@@ -17,6 +17,14 @@ no parseable coverage, is a **broken run** — a tool error (build red), never
 "0% patch coverage". :attr:`RunResult.broken` surfaces that so the CLI fails with
 an error exit code instead of a misleading hard gate failure.
 
+With one exception, and it is a different question rather than a softening of that
+one: *can* this ecosystem produce coverage at all? An ecosystem that declares
+:attr:`~brimyr.detect.Ecosystem.coverage_optional` cannot be expected to — bats
+measures nothing unless kcov happens to be installed — so a passing run of one is
+:attr:`RunOutcome.unmeasured`: green, with nothing measured, said out loud. Every
+other ecosystem instruments as it runs, so a missing report there still means the
+run broke and still turns the build red.
+
 The subprocess is injected (``runner=``) so the orchestration is unit-tested
 without a real toolchain.
 """
@@ -170,6 +178,11 @@ class RunOutcome:
     #: What provisioning did, or why it did nothing. Diagnostic only — but it is the
     #: line that says whose environment the number was measured in.
     provision_note: str = ""
+    #: The tests ran and passed, and this ecosystem produced no coverage BY NATURE —
+    #: see :attr:`Ecosystem.coverage_optional`. A clean run with nothing measured, which
+    #: is neither a broken run nor 0%: the third thing an empty report can mean, and the
+    #: only one of the three that is both green and a real test result.
+    unmeasured: bool = False
 
     @property
     def coverage_path(self) -> Path | None:
@@ -188,7 +201,16 @@ class RunOutcome:
 
         The common cause on the JVM is a surefire `<argLine>` that overrides rather than
         appends `@{argLine}`, which silently detaches the JaCoCo agent.
+
+        An ``unmeasured`` outcome is the one exception, and only ecosystems that declare
+        `coverage_optional` can produce one: a bats suite with no kcov on the runner
+        emits no report however green it is, so demanding one would fail the repo for
+        owning bash. It is NOT a licence to accept a missing report in general — the
+        .NET test project whose `coverlet.collector` is absent is a genuine "can
+        measure, did not" and stays red.
         """
+        if self.unmeasured:
+            return self.returncode == 0 and self.error is None
         return self.returncode == 0 and bool(self.report) and self.error is None
 
 
@@ -212,6 +234,18 @@ class RunResult:
     def coverage_paths(self) -> tuple[Path, ...]:
         """Every report across every ecosystem — what Sonar's reportPaths needs."""
         return tuple(path for o in self.outcomes for path in o.coverage_paths)
+
+    @property
+    def unmeasured(self) -> tuple[Ecosystem, ...]:
+        """Ecosystems that ran clean and measured nothing, for the summary to name.
+
+        A polyglot repo can be half-measured — `dotnet,shell` with no kcov reports real
+        .NET coverage and no shell coverage at all — and the changed lines of the
+        unmeasured half are then absent from the denominator rather than uncovered in
+        it. Silence there is the vacuous-pass failure by a new route, so the caller has
+        to be able to SAY which half is missing.
+        """
+        return tuple(o.ecosystem for o in self.outcomes if o.unmeasured)
 
 
 @dataclass(frozen=True)
@@ -351,6 +385,26 @@ def run_one(
                     f"the test command did not run: `{cmd}` — command not found{because}. "
                     "Nothing was measured. Install the test toolchain in the job, or set "
                     "`test_command` / `coverage_file`."
+                ),
+                provision_note=prov.note,
+            )
+        if eco.coverage_optional:
+            # "No report" and "broken run" are the same observation with two causes, and
+            # this ecosystem is the one where the harmless cause is the normal one: bats
+            # emits nothing without kcov, and kcov is installed nowhere by default. A
+            # green suite must not go red for that. The exit status still decides — a
+            # failing suite is a failing suite, whatever it did or did not measure.
+            if completed.returncode == 0:
+                return RunOutcome(eco, 0, (), None, unmeasured=True, provision_note=prov.note)
+            return RunOutcome(
+                eco,
+                completed.returncode,
+                (),
+                None,
+                error=(
+                    f"the tests failed (`{cmd}` exited {completed.returncode}). "
+                    "This ecosystem measures no coverage, so the exit status is the "
+                    "whole verdict."
                 ),
                 provision_note=prov.note,
             )
