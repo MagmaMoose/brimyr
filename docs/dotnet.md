@@ -81,7 +81,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }        # patch coverage needs the merge-base
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '8.0.x' }
