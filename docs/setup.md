@@ -45,7 +45,7 @@ to SonarQube when `sonar_url` is set. On a push to the default branch it runs a
 non-gating baseline that still feeds the trend.
 
 No checkout step: the action checks out with `fetch-depth: 0` by default, which is what
-patch coverage needs. Add your own `actions/checkout@v6` with `fetch-depth: 0` and set
+patch coverage needs. Add your own `actions/checkout@v7` with `fetch-depth: 0` and set
 `checkout: 'false'` **only** if an earlier step in the job needs the workspace, because
 the action's own checkout would run too late for it.
 

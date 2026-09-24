@@ -76,7 +76,7 @@ the runner until the job timeout, six hours by default on GitHub-hosted runners.
 Set `fetch-depth: 0`:
 
 ```yaml
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
 ```
 
