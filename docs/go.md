@@ -57,12 +57,12 @@ What is left is a statement metric again. On this function
 
 ```go
 func Add(x, y int) int {
-	// a comment inside the body
+    // a comment inside the body
 
-	if x > 100 {
-		return 0
-	}
-	return x + y
+    if x > 100 {
+        return 0
+    }
+    return x + y
 }
 ```
 
