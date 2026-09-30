@@ -4,7 +4,7 @@ A **pure core** with thin **side-effecting edges**, serving two gates: patch cov
 and net-new quality findings.
 
 `src/brimyr/coverage/` is the pure core: `diff.py` parses a unified diff into a
-`DiffIndex`; `lcov.py` / `cobertura.py` / `jacoco.py` parse reports into a
+`DiffIndex`; `lcov.py` / `cobertura.py` / `jacoco.py` / `gocover.py` parse reports into a
 `CoverageReport` (`model.py`); `patch.py` intersects the two — added lines ∩ executable
 lines — and is the coverage gate's heart. Nothing under `coverage/` may import
 `subprocess`, `os`, network or Actions code; that purity is what keeps it deterministic

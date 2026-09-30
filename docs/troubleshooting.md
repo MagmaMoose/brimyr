@@ -93,8 +93,9 @@ ancestor.
 
 ## `No test suite detected`: the run passed but nothing was gated
 
-Not an error. Auto-detection found no ecosystem marker, so no tests ran and there is
-nothing to gate: the job is green, `gate_result` is `skipped`, and the summary says so
+Not an error. Auto-detection found no ecosystem marker, at the root or in a
+[project in a subdirectory](index.md#projects-in-subdirectories), so no tests ran and there
+is nothing to gate: the job is green, `gate_result` is `skipped`, and the summary says so
 in place of the coverage table.
 
 This is what makes Brimyr safe to provision across a whole org rather than adopt one
@@ -116,11 +117,15 @@ purpose. Detection needs one of:
   files and then fail importing them. Depth alone is fine: `backend/tests/test_api.py`
   with no `backend/pyproject.toml` is still this repo's suite.
 
-  If your tests really do live in a nested project and you want them gated from the
-  root, add a root pytest section pointing at them (`testpaths`): an explicit config
-  wins outright. Or set `ecosystem:` plus a `test_command:` that enters the directory.
+  A nested project whose root detects nothing is found on its own and run from its own
+  directory. Under a root that IS detected it is not: the root's verdict stays as it was.
+  To gate it from the root anyway, add a root pytest section pointing at it
+  (`testpaths`), since an explicit config wins outright, or set `ecosystem:` plus a
+  `test_command:` that enters the directory.
 - `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
 - `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
+- `go.mod` **plus** a `_test.go` file the root module's `./...` reaches (not under
+  `vendor/`, `testdata/`, a `_`/`.` directory, or a nested module). See [Go](go.md).
 - `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
 - A real, non-vendored `*.bats` file for [shell](shell.md). A `tests/` directory on
   its own is never enough, and a vendored bats-core submodule under `test/bats` is

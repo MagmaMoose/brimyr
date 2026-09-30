@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from brimyr.detect import ecosystem
 from brimyr.provision import plan
 
@@ -61,8 +63,12 @@ def test_requirements_only_repo_gets_an_ephemeral_environment(tmp_path):
 
     result = plan(PY, tmp_path, which=_has("uv"))
 
+    # `--no-project`: from a nested directory uv would otherwise walk UP to whatever
+    # pyproject.toml sits above it and sync that project instead. `python -m` puts the
+    # project directory on sys.path, as the `pip install -r` job it reproduces does.
     assert result.command == (
-        f"uv run --with pytest-cov --with-requirements requirements.txt {PY.command_str()}"
+        "uv run --no-project --with pytest-cov --with pip "
+        f"--with-requirements requirements.txt python -m {PY.command_str()}"
     )
 
 
@@ -304,3 +310,195 @@ def test_no_bats_and_no_npx_declines_and_says_why(tmp_path):
 
     assert result.command is None
     assert "bats" in result.note and "npx" in result.note
+
+
+# ── a pinned requirements file is the lock ──────────────────────────────────
+#
+# MagmaMoose/dunmir's backend is the shape: a `[project]` table that declares
+# `fastapi` unpinned, a requirements.txt that pins `fastapi==0.115.6` (newer releases
+# mount one route of 24) plus `pynacl`, which the table omits, and a `readme` outside
+# the project that stops it being built at all. Its CI runs `pip install -r` and
+# pytest from the project directory; building the project instead cannot even start.
+
+_PINNED = "fastapi==0.115.6\npyjwt[crypto]==2.13.0\npynacl==1.6.2 ; python_version >= '3.8'\n"
+
+
+def test_a_project_whose_requirements_pin_everything_is_run_from_them(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\ndependencies = ['fastapi']\n")
+    (tmp_path / "requirements.txt").write_text(_PINNED)
+
+    result = plan(PY, tmp_path, which=_has("uv"))
+
+    assert result.command == (
+        "uv run --no-project --with pytest-cov --with pip "
+        f"--with-requirements requirements.txt python -m {PY.command_str()}"
+    )
+    assert "pinned" in result.note
+
+
+def test_unpinned_requirements_leave_a_project_synced_as_before(tmp_path):
+    # Not a lock, so not the environment: nothing changes for a repo that has a verdict.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "requirements-dev.txt").write_text("pytest>=8\nhypothesis\n")
+
+    assert (
+        plan(PY, tmp_path, which=_has("uv")).command
+        == f"uv run --with pytest-cov {PY.command_str()}"
+    )
+
+
+def test_a_pinned_file_of_something_else_is_not_the_projects_lock(tmp_path):
+    # Every line pinned, but it is docs tooling: the project's own `requests` is nowhere
+    # in it. Running from it would install mkdocs and none of what the tests import.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['requests']\n")
+    (tmp_path / "requirements.txt").write_text("mkdocs==1.6.0\n")
+
+    assert plan(PY, tmp_path, which=_has("uv")).command == (
+        f"uv run --with pytest-cov {PY.command_str()}"
+    )
+
+
+def test_a_uv_lock_still_wins_over_a_pinned_requirements_file(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "requirements.txt").write_text(_PINNED)
+
+    assert plan(PY, tmp_path, which=_has("uv")).command.startswith("uv run --with pytest-cov")
+
+
+def test_a_src_layout_is_installed_because_nothing_else_makes_it_importable(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "requirements.txt").write_text(_PINNED)
+    (tmp_path / "src" / "x").mkdir(parents=True)
+
+    assert "--with-editable ." in plan(PY, tmp_path, which=_has("uv")).command
+
+
+def test_pinning_is_read_through_includes_and_continuation_lines(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "base.txt").write_text(
+        "-r requirements-dev.txt\nfastapi==0.115.6 \\\n    --hash=sha256:abc\n"
+    )
+    (tmp_path / "requirements-dev.txt").write_text("-r base.txt\n# a comment\npytest==8.3.0\n")
+
+    # A cycle of includes ends where it started, and every requirement it saw is pinned.
+    assert "--no-project" in plan(PY, tmp_path, which=_has("uv")).command
+
+    (tmp_path / "base.txt").write_text("-r requirements-dev.txt\nfastapi\n")
+    assert "--no-project" not in plan(PY, tmp_path, which=_has("uv")).command
+
+
+# ── plugins the pytest configuration names ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("pytest.ini", "[pytest]\nasyncio_mode = auto\n"),
+        ("setup.cfg", "[tool:pytest]\nasyncio_mode = auto\n"),
+        ("pyproject.toml", "[project]\nname='x'\n[tool.pytest.ini_options]\nasyncio_mode='auto'\n"),
+    ],
+)
+def test_an_asyncio_mode_nobody_declared_gets_pytest_asyncio(tmp_path, name, body):
+    # Without the plugin pytest only warns about the setting, then fails every async test.
+    (tmp_path / name).write_text(body)
+    (tmp_path / "requirements.txt").write_text("fastapi==0.115.6\n")
+
+    assert "--with pytest-asyncio" in plan(PY, tmp_path, which=_has("uv")).command
+
+
+def test_a_declared_pytest_asyncio_keeps_the_repos_own_version(tmp_path):
+    (tmp_path / "pytest.ini").write_text("[pytest]\nasyncio_mode = auto\n")
+    (tmp_path / "requirements.txt").write_text("fastapi==0.115.6\nPytest_Asyncio==0.24.0\n")
+
+    assert "pytest-asyncio" not in plan(PY, tmp_path, which=_has("uv")).command
+
+
+def test_a_setting_in_a_comment_is_not_a_setting(tmp_path):
+    (tmp_path / "pytest.ini").write_text("[pytest]\n# asyncio_mode = auto\n")
+    (tmp_path / "requirements.txt").write_text("fastapi==0.115.6\n")
+
+    assert "pytest-asyncio" not in plan(PY, tmp_path, which=_has("uv")).command
+
+
+def test_a_poetry_repo_gets_the_plugin_in_its_own_environment(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry]\nname='x'\n[tool.pytest.ini_options]\nasyncio_mode='auto'\n"
+    )
+
+    setup = plan(PY, tmp_path, which=_has("poetry")).setup
+
+    assert setup[-1].startswith("poetry run python -m pip install")
+    assert setup[-1].endswith("pytest-cov pytest-asyncio")
+
+
+# ── conventional test extras and groups ─────────────────────────────────────
+
+
+def test_a_dev_extra_is_synced_and_what_it_declares_is_not_injected(tmp_path):
+    # brimyr's own broker: pytest-asyncio lives in `[project.optional-dependencies] dev`,
+    # which `uv run` installs only when asked.
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\n"
+        "[project.optional-dependencies]\ndev=['pytest-asyncio>=0.24']\nserver=['uvicorn']\n"
+        "[tool.pytest.ini_options]\nasyncio_mode='auto'\n"
+    )
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+
+    command = plan(PY, tmp_path, which=_has("uv")).command
+
+    assert command == f"uv run --extra dev --with pytest-cov {PY.command_str()}"
+
+
+def test_a_test_group_is_synced_beside_the_default_dev_group(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\n[dependency-groups]\ntest=['pytest']\ndocs=['mkdocs']\n"
+    )
+
+    assert "--group test --with pytest-cov" in plan(PY, tmp_path, which=_has("uv")).command
+
+
+# ── JavaScript: vitest needs a coverage provider ────────────────────────────
+
+VITEST = ecosystem("vitest")
+
+
+def test_a_vitest_suite_with_no_coverage_provider_gets_one_at_vitests_version(tmp_path):
+    (tmp_path / "package.json").write_text('{"devDependencies": {"vitest": "^4"}}')
+
+    setup = plan(VITEST, tmp_path, which=_has("npm")).setup
+
+    assert setup[0].startswith("npm ci")
+    assert "@vitest/coverage-v8@$(node -p" in setup[1]
+    assert "--no-save" in setup[1]
+
+
+@pytest.mark.parametrize("provider", ["@vitest/coverage-v8", "@vitest/coverage-istanbul"])
+def test_a_declared_provider_is_left_alone(tmp_path, provider):
+    (tmp_path / "package.json").write_text(f'{{"devDependencies": {{"{provider}": "^4"}}}}')
+
+    assert len(plan(VITEST, tmp_path, which=_has("npm")).setup) == 1
+
+
+def test_an_installed_provider_is_left_alone_even_when_undeclared(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "node_modules" / "@vitest" / "coverage-v8").mkdir(parents=True)
+
+    assert plan(VITEST, tmp_path, which=_has("npm")).setup == ()
+
+
+def test_jest_needs_no_provider(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "node_modules").mkdir()
+
+    assert plan(JS, tmp_path, which=_has("npm")).setup == ()
+
+
+# ── Go ───────────────────────────────────────────────────────────────────────
+
+
+def test_go_restores_its_own_modules_and_says_when_go_is_missing(tmp_path):
+    go = ecosystem("go")
+    present = plan(go, tmp_path, which=_has("go"))
+    assert (present.setup, present.command) == ((), None)
+    assert "`go` is not on PATH" in plan(go, tmp_path, which=_NOTHING).note

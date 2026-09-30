@@ -40,9 +40,12 @@ injected so the whole decision table is unit-tested without a toolchain.
 
 from __future__ import annotations
 
+import configparser
+import json
+import re
 import shutil
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +64,36 @@ _REQUIREMENTS = (
     "requirements_test.txt",
     "requirements.txt",
 )
+
+#: Optional-dependency extras that hold a project's test dependencies by convention.
+#: `uv run` installs none of them unless asked, so a repo whose pytest-asyncio lives in
+#: `[project.optional-dependencies] dev` (brimyr's own broker) got a suite with its async
+#: tests failing. Only extras the project actually defines are passed; `uv` refuses an
+#: unknown one.
+_TEST_EXTRAS = ("test", "tests", "testing", "dev")
+
+#: PEP 735 groups that do. `dev` is absent on purpose: uv already syncs it by default.
+_TEST_GROUPS = ("test", "tests", "testing")
+
+#: pytest settings owned by a plugin, and that plugin. Without it pytest only WARNS about
+#: an unknown setting, and then fails every `async def` test, because nothing runs them.
+#: MagmaMoose/dunmir's backend sets `asyncio_mode = auto` and declares pytest-asyncio
+#: nowhere: its CI installs the plugin by hand, which no fleet-wide workflow can know.
+_PLUGIN_SETTINGS = (
+    ("asyncio_mode", "pytest-asyncio"),
+    ("asyncio_default_fixture_loop_scope", "pytest-asyncio"),
+)
+
+#: Where pytest reads its settings from: file, and the section that makes it a config.
+_PYTEST_INI_SECTIONS = (
+    ("pytest.ini", "pytest"),
+    (".pytest.ini", "pytest"),
+    ("tox.ini", "pytest"),
+    ("setup.cfg", "tool:pytest"),
+)
+
+#: The package name at the start of a requirement: `pyjwt[crypto]==2.13.0` -> `pyjwt`.
+_REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
 @dataclass(frozen=True)
@@ -136,6 +169,117 @@ def _poetry_declares(data: dict, package: str) -> bool:
     return any(package in t for t in tables if isinstance(t, dict))
 
 
+def _canonical(name: str) -> str:
+    """PEP 503 normalisation: `Pytest_Asyncio` and `pytest-asyncio` are one package."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _names(requirements: Iterable[object]) -> set[str]:
+    """Canonical package names out of PEP 508 strings; anything else is skipped."""
+    names: set[str] = set()
+    for requirement in requirements:
+        if isinstance(requirement, str) and "://" not in requirement.split("@")[0]:
+            match = _REQUIREMENT_NAME.match(requirement.strip())
+            if match:
+                names.add(_canonical(match.group(1)))
+    return names
+
+
+def _requirement_lines(path: Path, seen: frozenset[Path] = frozenset()) -> list[str]:
+    """The requirement lines of a requirements file, `-r` includes followed.
+
+    Options are dropped (`-e`, `-c`, `--index-url`, a `--hash` continuation): they
+    install nothing by name, and a constraints file installs nothing at all. A cycle of
+    `-r` includes ends where it started instead of recursing for ever.
+    """
+    resolved = path.resolve()
+    if resolved in seen:
+        return []
+    lines: list[str] = []
+    # A trailing backslash continues the line; hashes are usually written that way.
+    for raw in re.sub(r"\\\r?\n", " ", _read(path)).splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
+        include = re.match(r"^(?:-r|--requirement)(?:\s+|=)(\S+)$", line)
+        if include:
+            lines.extend(_requirement_lines(path.parent / include.group(1), seen | {resolved}))
+        elif line and not line.startswith("-"):
+            lines.append(line)
+    return lines
+
+
+def _pinned(line: str) -> bool:
+    """True when a requirement names exactly one version (`==`/`===`) or one artifact."""
+    spec = line.split(";", 1)[0]
+    return "==" in spec or " @ " in spec
+
+
+def _pytest_settings(root: Path, data: dict) -> set[str]:
+    """Every setting name the repo's pytest configuration uses, wherever it lives.
+
+    Parsed, not grepped, for the reason `_parse_pyproject` gives: `asyncio_mode` in a
+    comment is not a setting. pytest reads the first config file it finds and ignores
+    the rest, but a union is the safe side here: the answer only ever adds a plugin.
+    """
+    settings: set[str] = set()
+    tool = data.get("tool", {}) if isinstance(data.get("tool"), dict) else {}
+    table = tool.get("pytest")
+    if isinstance(table, dict):
+        ini = table.get("ini_options")
+        if isinstance(ini, dict):
+            settings.update(ini)
+        # pytest 9 reads a native `[tool.pytest]` table too, beside the ini_options one.
+        settings.update(key for key in table if key != "ini_options")
+    for name, section in _PYTEST_INI_SECTIONS:
+        text = _read(root / name)
+        if not text:
+            continue
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            parser.read_string(text)
+        except configparser.Error:
+            continue
+        if parser.has_section(section):
+            settings.update(parser.options(section))
+    return settings
+
+
+def _plugins_needed(root: Path, data: dict) -> list[str]:
+    """The pytest plugins this repo's configuration depends on, in a stable order."""
+    settings = _pytest_settings(root, data)
+    return list(dict.fromkeys(plugin for key, plugin in _PLUGIN_SETTINGS if key in settings))
+
+
+def _project_declares(data: dict, extras: list[str], groups: list[str]) -> set[str]:
+    """Package names a `uv run` with these extras and groups will install.
+
+    Only what is actually synced counts: a plugin declared in an extra that is not
+    being installed is, for this run, not declared at all.
+    """
+    project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
+    declared = _names(project.get("dependencies") or [])
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, dict):
+        for extra in extras:
+            declared |= _names(optional.get(extra) or [])
+    dependency_groups = data.get("dependency-groups")
+    if isinstance(dependency_groups, dict):
+        for group in ("dev", *groups):
+            declared |= _names(dependency_groups.get(group) or [])
+    tool = data.get("tool", {}) if isinstance(data.get("tool"), dict) else {}
+    uv = tool.get("uv", {}) if isinstance(tool.get("uv"), dict) else {}
+    return declared | _names(uv.get("dev-dependencies") or [])
+
+
+def _defined(data: dict, table: str, names: tuple[str, ...]) -> list[str]:
+    """Which of ``names`` the project defines under ``table`` (an extra or a group)."""
+    if table == "optional-dependencies":
+        project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
+        defined = project.get("optional-dependencies")
+    else:
+        defined = data.get(table)
+    return [name for name in names if isinstance(defined, dict) and name in defined]
+
+
 def _python_plan(root: Path, command: str, which: Which) -> Provision:
     """How this Python repo installs itself, and how to run pytest inside that.
 
@@ -146,7 +290,30 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
     the repo's, so a repo can have a perfectly good pytest setup and still have no way
     to satisfy ``--cov``. ``--with pytest-cov`` supplies it without touching the
     repo's own declared dependencies, and because ``pytest-cov`` depends on ``pytest``
-    it also covers a repo that has test files but never declared the runner.
+    it also covers a repo that has test files but never declared the runner. A plugin
+    the repo's pytest configuration names but never declares (``asyncio_mode`` without
+    pytest-asyncio) is injected the same way; one it does declare keeps its version.
+
+    Which environment, in order:
+
+    * ``uv.lock`` is the lock, so the project is synced from it, with any conventional
+      test extras (``test``/``tests``/``testing``/``dev``) and groups it defines.
+    * A requirements file that pins EVERY requirement (``==``) and names every dependency
+      the project declares is a lock too, and when there is no ``uv.lock`` it is the
+      only one. The suite runs in an environment built
+      from it, from the project directory (``python -m pytest``), exactly as the repo's
+      own ``pip install -r`` job runs it. Building the project instead resolved its
+      ``[project]`` table afresh: MagmaMoose/dunmir's backend declares ``fastapi``
+      unpinned there and pins ``0.115.6`` in ``requirements.txt`` because newer
+      releases mount one route of 24, lists ``pynacl`` only in the requirements file,
+      and cannot be built at all (its ``readme`` sits outside the project).
+    * Any other ``[project]`` or ``[tool.uv]`` project is synced as a project.
+    * A requirements file alone gets the same ephemeral environment as a pinned one.
+
+    The requirements environment carries ``pip`` too: it reproduces a ``pip install
+    -r`` job, whose interpreter has pip, and suites that shell out to ``python -m pip``
+    (dunmir's Lambda packaging tests) fail without it. A uv-native repo's own CI has no
+    pip either, so its tests already cope and it gets none.
 
     Poetry gets its own branch only for the pre-2.0 layout, where dependencies live
     under ``[tool.poetry.dependencies]`` and there is no ``[project]`` table at all —
@@ -161,6 +328,7 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
     tool = data.get("tool", {}) if isinstance(data.get("tool"), dict) else {}
     has_pep621 = "project" in data
     poetry_only = "poetry" in tool and not has_pep621
+    plugins = _plugins_needed(root, data)
 
     if poetry_only:
         if not which("poetry"):
@@ -168,12 +336,13 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
                 note="poetry project, but `poetry` is not on PATH — running tests as-is"
             )
         setup = ["poetry install --no-interaction --no-ansi"]
-        if not _poetry_declares(data, "pytest-cov"):
-            # Into poetry's OWN virtualenv, never the ambient interpreter. Skipped when
-            # the repo already declares the plugin, so a project that pins a version
-            # keeps it.
+        # Into poetry's OWN virtualenv, never the ambient interpreter. Skipped for a
+        # plugin the repo already declares, so a project that pins a version keeps it.
+        missing = [p for p in ("pytest-cov", *plugins) if not _poetry_declares(data, p)]
+        if missing:
             setup.append(
-                "poetry run python -m pip install --disable-pip-version-check --quiet pytest-cov"
+                "poetry run python -m pip install --disable-pip-version-check --quiet "
+                + " ".join(missing)
             )
         return Provision(
             setup=tuple(setup),
@@ -184,28 +353,102 @@ def _python_plan(root: Path, command: str, which: Which) -> Provision:
     if not which("uv"):
         return Provision(note="`uv` is not on PATH — running tests as-is")
 
-    if (root / "uv.lock").is_file() or has_pep621 or "uv" in tool:
-        locked = " (uv.lock)" if (root / "uv.lock").is_file() else ""
+    locked = (root / "uv.lock").is_file()
+    requirements = _first_existing(root, _REQUIREMENTS)
+    lines = _requirement_lines(root / requirements) if requirements else []
+    # A lock OF THIS PROJECT: every line pinned, and every dependency the project declares
+    # among them. A pinned file of something else (docs tooling) is not its environment.
+    project = data.get("project", {}) if isinstance(data.get("project"), dict) else {}
+    declared_by_project = _names(project.get("dependencies") or [])
+    pinned = (
+        bool(lines)
+        and all(_pinned(line) for line in lines)
+        and declared_by_project <= _names(lines)
+    )
+
+    if locked or ((has_pep621 or "uv" in tool) and not pinned):
+        extras = _defined(data, "optional-dependencies", _TEST_EXTRAS)
+        groups = _defined(data, "dependency-groups", _TEST_GROUPS)
+        declared = _project_declares(data, extras, groups)
+        injected = ["pytest-cov", *(p for p in plugins if _canonical(p) not in declared)]
+        flags = [
+            *(f"--extra {extra}" for extra in extras),
+            *(f"--group {group}" for group in groups),
+            *(f"--with {package}" for package in injected),
+        ]
+        synced = " + ".join(
+            [
+                "project and dev group",
+                *(f"extra {e}" for e in extras),
+                *(f"group {g}" for g in groups),
+            ]
+        )
         return Provision(
-            command=f"uv run --with pytest-cov {command}",
-            note=f"uv run{locked} — project and dev group synced, pytest-cov injected",
+            command=f"uv run {' '.join(flags)} {command}",
+            note=(
+                f"uv run{' (uv.lock)' if locked else ''} — {synced} synced, "
+                f"{', '.join(injected)} injected"
+            ),
         )
 
-    requirements = _first_existing(root, _REQUIREMENTS)
     if requirements:
-        # No project to install, so the suite runs against an ephemeral environment
-        # built from the requirements file. Imports of the repo's own modules rely on
-        # the layout or conftest, exactly as they do when a developer runs pytest from
-        # the repo root with the requirements installed.
+        declared = _names(lines)
+        injected = [
+            "pytest-cov",
+            "pip",
+            *(p for p in plugins if _canonical(p) not in declared),
+        ]
+        # A `src/` package is importable only once installed, and the requirements
+        # file is not what installs it: `--with-editable .` is. A flat layout imports
+        # from the project directory, which `python -m` puts on sys.path.
+        editable = ["--with-editable ."] if has_pep621 and (root / "src").is_dir() else []
+        flags = [
+            "--no-project",
+            *(f"--with {package}" for package in injected),
+            *editable,
+            f"--with-requirements {requirements}",
+        ]
+        run = f"python -m {command}" if command.startswith("pytest") else command
+        why = " (every requirement pinned: it is the lock)" if has_pep621 else ""
         return Provision(
-            command=f"uv run --with pytest-cov --with-requirements {requirements} {command}",
-            note=f"uv run --with-requirements {requirements}, pytest-cov injected",
+            command=f"uv run {' '.join(flags)} {run}",
+            note=f"uv run --with-requirements {requirements}{why}, {', '.join(injected)} injected",
         )
 
     return Provision(note="no installable Python project found — running tests as-is")
 
 
-def _javascript_plan(root: Path, which: Which) -> Provision:
+#: The coverage providers vitest can load. `--coverage` needs one installed next to vitest,
+#: and without it vitest prints `MISSING DEPENDENCY Cannot find dependency
+#: '@vitest/coverage-v8'`, writes no report, and the run is broken.
+_VITEST_PROVIDERS = ("@vitest/coverage-v8", "@vitest/coverage-istanbul")
+
+#: Installs vitest's default provider AT vitest's own installed version: a provider from
+#: another release refuses to load. `--no-save` leaves package.json and the lockfile as
+#: they were. `latest` only when vitest is not in node_modules, where `npx` fetches the
+#: latest vitest too, so the two still agree.
+_VITEST_PROVIDER_INSTALL = (
+    "npm install --no-save --no-audit --no-fund "
+    '"@vitest/coverage-v8@$(node -p '
+    '"require(\'./node_modules/vitest/package.json\').version" 2>/dev/null || echo latest)"'
+)
+
+
+def _declares(root: Path, packages: tuple[str, ...]) -> bool:
+    """True if package.json declares any of ``packages``, or node_modules already has one."""
+    try:
+        data = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    declared: set[str] = set()
+    if isinstance(data, dict):
+        for table in ("dependencies", "devDependencies"):
+            if isinstance(data.get(table), dict):
+                declared.update(data[table])
+    return any(p in declared or (root / "node_modules" / p).is_dir() for p in packages)
+
+
+def _javascript_plan(root: Path, which: Which, eco: Ecosystem) -> Provision:
     """Install the repo's node modules when nothing else has.
 
     The same bug as Python's, one letter at a time: ``npx --yes jest`` cheerfully
@@ -218,15 +461,39 @@ def _javascript_plan(root: Path, which: Which) -> Provision:
     ``package.json``; ``npm install`` handles both cases and is the honest fallback.
     The ``||`` is why this is one command and not two — the second only runs when the
     first fails, which a list of must-all-succeed steps cannot express.
+
+    A vitest suite also needs a coverage provider, which is Brimyr's requirement in
+    the way pytest-cov is: a repo can run `vitest run` green for ever without one, and
+    MagmaMoose/dunmir's frontend does. Installed only when the repo declares neither.
     """
+    setup: list[str] = []
+    notes: list[str] = []
     if (root / "node_modules").is_dir():
-        return Provision(note="node_modules already present")
-    if not which("npm"):
+        notes.append("node_modules already present")
+    elif not which("npm"):
         return Provision(note="`npm` is not on PATH — running tests as-is")
-    return Provision(
-        setup=("npm ci --no-audit --no-fund || npm install --no-audit --no-fund",),
-        note="npm ci (node_modules was absent)",
-    )
+    else:
+        setup.append("npm ci --no-audit --no-fund || npm install --no-audit --no-fund")
+        notes.append("npm ci (node_modules was absent)")
+    if "vitest" in eco.test_command and not _declares(root, _VITEST_PROVIDERS):
+        if which("npm"):
+            setup.append(_VITEST_PROVIDER_INSTALL)
+            notes.append("@vitest/coverage-v8 injected at vitest's version")
+        else:
+            notes.append("no vitest coverage provider and no `npm` to install one")
+    return Provision(setup=tuple(setup), note="; ".join(notes))
+
+
+def _go_plan(which: Which) -> Provision:
+    """Go fetches its own modules during `go test`; the one gap is `go` itself.
+
+    Nothing is installed here: `action.yml` provisions Go when the runner has none,
+    and a missing binary is then the shell's `127`, reported as "nothing ran" with
+    this note beside it.
+    """
+    if not which("go"):
+        return Provision(note="`go` is not on PATH — running tests as-is")
+    return Provision(note="Go restores its own modules")
 
 
 #: Where the kcov wrap writes, matching the `shell` ecosystem's `coverage_paths`. kcov
@@ -299,7 +566,9 @@ def plan(
     if eco.key == "python":
         return _python_plan(root, cmd, which)
     if eco.key == "javascript":
-        return _javascript_plan(root, which)
+        return _javascript_plan(root, which, eco)
+    if eco.key == "go":
+        return _go_plan(which)
     if eco.key == "shell":
         return _shell_plan(cmd, which)
     return Provision(note=f"{eco.label} restores its own dependencies")

@@ -137,8 +137,10 @@ class TestDotnetStrategy:
         cli = [e.key for e in ECOSYSTEMS if e.sonar_strategy is SonarStrategy.CLI]
         # `shell` is CLI-strategy but has no `sonar_property`: Sonar has no importer for
         # shell coverage, so there is nothing for a post-step to hand it.
-        assert set(cli) == {"python", "javascript", "java", "shell"}  # nosec B101
+        assert set(cli) == {"python", "javascript", "java", "go", "shell"}  # nosec B101
         assert not ecosystem("shell").sonar_property  # nosec B101
+        # Go's profile is read by SonarQube's Go analyzer as-is; no conversion step.
+        assert ecosystem("go").sonar_property == "sonar.go.coverage.reportPaths"  # nosec B101
 
 
 class TestEscapeHatchFeedsSonar:

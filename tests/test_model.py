@@ -47,3 +47,16 @@ def _report(files):
         for line, hits in line_hits.items():
             b.record(path, line, hits)
     return b.build()
+
+
+def test_remap_paths_renames_and_folds_two_spellings_covered_wins():
+    from brimyr.coverage.model import remap_paths
+
+    b = CoverageBuilder()
+    b.record("app/main.py", 1, 0)
+    b.record("backend/app/main.py", 1, 3)
+    b.record("app/other.py", 2, 1)
+    report = remap_paths(b.build(), lambda p: p if p.startswith("backend/") else f"backend/{p}")
+
+    assert {f.path for f in report.files} == {"backend/app/main.py", "backend/app/other.py"}
+    assert report.get("backend/app/main.py").covered == frozenset({1})

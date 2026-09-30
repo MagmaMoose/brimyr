@@ -29,6 +29,7 @@ def render_summary(
     broken: bool = False,
     ecosystems: Sequence[Ecosystem] = (),
     sonar_message: str | None = None,
+    broken_in: Sequence[str] = (),
 ) -> str:
     """Render the job summary's **coverage** block: ``## Brimyr: Quality Assurance``.
 
@@ -52,8 +53,9 @@ def render_summary(
     lines.append("")
 
     if broken:
+        where = f" in {', '.join(broken_in)}" if broken_in else ""
         lines.append(
-            "> ❌ **Broken test run** — the tests failed or produced no coverage. "
+            f"> ❌ **Broken test run**{where} — the tests failed or produced no coverage. "
             "This is a tool error (build red), **not** 0% patch coverage."
         )
         lines.append("")

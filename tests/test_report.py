@@ -258,3 +258,15 @@ def test_a_fully_measured_run_says_nothing_about_measurement(make_report):
     """No new noise on the runs that make up the whole fleet."""
     out = render_summary(_decision(make_report, 9, 10), Mode.PR)
     assert "Not everything was measured" not in out
+
+
+def test_a_broken_summary_names_the_projects_that_broke(make_report):
+    decision = _decision(make_report, 0, 0, broken=True)
+    out = render_summary(decision, Mode.PR, broken=True, broken_in=("Python in backend/",))
+    assert "**Broken test run** in Python in backend/ —" in out
+
+
+def test_a_broken_summary_without_names_reads_as_before(make_report):
+    decision = _decision(make_report, 0, 0, broken=True)
+    out = render_summary(decision, Mode.PR, broken=True)
+    assert "**Broken test run** — the tests failed" in out

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess  # nosec B404 - fixtures build fake CompletedProcess objects; nothing runs
+from pathlib import Path
 
 from brimyr.html_report import DEFAULT_REPORT_TYPES, build_args, render
 
@@ -116,6 +117,26 @@ class TestEveryCommandThatOffersItActsOnIt:
         )
         assert cli._maybe_render_html(args, [str(cov)]) == "ok"  # nosec B101
         assert calls == [[str(cov)]]  # nosec B101 - the report it ingested is what it renders
+
+    def test_a_nested_projects_directory_is_a_source_dir_too(self, monkeypatch, tmp_path):
+        # Its report names files relative to ITS directory, not the repo root.
+        from dataclasses import replace
+
+        import brimyr.cli as cli
+        from brimyr.detect import ecosystem
+
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            cli.html_report,
+            "render",
+            lambda reports, target, repo=".", **kw: (
+                seen.update(kw) or cli.html_report.HtmlReportResult(True, "ok", target_dir=tmp_path)
+            ),
+        )
+        nested = replace(ecosystem("javascript"), project_dir="frontend")
+        args = argparse.Namespace(html_report=str(tmp_path / "out"), repo="r")
+        cli._maybe_render_html(args, ["frontend/coverage/lcov.info"], [ecosystem("go"), nested])
+        assert seen["source_dirs"] == ("r", str(Path("r") / "frontend"))  # nosec B101
 
     def test_absent_flag_is_a_no_op(self):
         import brimyr.cli as cli

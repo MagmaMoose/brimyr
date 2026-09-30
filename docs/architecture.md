@@ -19,6 +19,7 @@ src/brimyr/
     lcov.py       #   lcov .info    -> CoverageReport
     cobertura.py  #   Cobertura XML -> CoverageReport
     jacoco.py     #   JaCoCo XML    -> CoverageReport (its own format, not Cobertura)
+    gocover.py    #   Go profile    -> CoverageReport (blocks trimmed to statement lines)
     patch.py      #   DiffIndex ∩ CoverageReport -> PatchCoverage  (the gate's heart)
                   #   + compute_total_coverage: the reported, never-gated total
   git.py          # the ONLY git/subprocess boundary (merge-base, diff, shallow detect)
@@ -59,15 +60,18 @@ injected so the tests need no network, and neither ever raises out into the gate
 1. **`modes.resolve_mode`** decides PR (gate) vs baseline (no gate) from
    `GITHUB_EVENT_NAME` or an explicit flag.
 2. **`detect.detect_ecosystems`** sniffs marker files → the ecosystem(s) and their
-   test commands (or the escape hatch / forced ecosystem is used instead).
+   test commands (or the escape hatch / forced ecosystem is used instead). When the root
+   matches nothing, it searches a few directories down for projects of their own, each
+   carrying the `project_dir` it was found in.
 3. **`provision.plan`** reads the same tree for a dependency manager it can use, and
    returns a setup command (`npm ci`), a wrapped test command (`uv run …`), or an
    empty plan and a reason. Detecting a suite that then cannot be launched is worth
    nothing, and that is a red gate on a repo whose tests are fine.
 4. **`runner.run_tests`** runs the plan's setup, then each ecosystem's command with
-   coverage on, locates the emitted file, and parses it (`coverage.lcov` /
-   `coverage.cobertura`) into a `CoverageReport`. A failed setup, a failed run or an
-   empty one sets `RunResult.broken`.
+   coverage on, from its project directory, locates the emitted file, and parses it
+   (`coverage.lcov` / `coverage.cobertura` / `coverage.gocover`) into a `CoverageReport`
+   whose paths are repo-relative. A failed setup, a failed run or an empty one sets
+   `RunResult.broken`.
 5. **`git.compute_changed_lines`** resolves `merge-base(base, head)`, runs
    `git diff --unified=0`, and hands the text to `coverage.diff.parse_unified_diff`
    → a `DiffIndex`.

@@ -349,3 +349,148 @@ def test_a_polyglot_repo_measures_the_half_that_can_and_names_the_half_that_cann
     assert not result.broken
     assert result.report.get("a.py") is not None
     assert [e.key for e in result.unmeasured] == ["shell"]
+
+
+# ── a nested project runs where it lives ──────────────────────────────────────
+#
+# Detection's fallback finds `backend/` below a root with nothing in it. Its suite has
+# to be installed, run and measured from `backend/`, and its report has to come back
+# naming files the way the diff does.
+
+
+def _nested(eco_key, project_dir):
+    from dataclasses import replace
+
+    from brimyr.detect import ecosystem
+
+    return replace(ecosystem(eco_key), project_dir=project_dir, label=f"x in {project_dir}/")
+
+
+def _cobertura_for(path, *filenames):
+    classes = "".join(
+        f'<class filename="{name}"><lines><line number="1" hits="1"/></lines></class>'
+        for name in filenames
+    )
+    path.write_text(
+        f"<coverage><packages><package><classes>{classes}</classes></package></packages></coverage>"
+    )
+
+
+def test_a_nested_project_runs_from_its_own_directory(tmp_path):
+    backend = tmp_path / "backend"
+    (backend / "app").mkdir(parents=True)
+    (backend / "app" / "main.py").write_text("x = 1\n")
+    _cobertura_for(backend / "coverage.xml", "app/main.py")
+    seen = []
+
+    outcome = run_one(
+        _nested("python", "backend"),
+        tmp_path,
+        runner=lambda cmd, cwd: seen.append(cwd) or _completed(0),
+        provision=False,
+    )
+
+    assert seen == [str(backend)]
+    assert outcome.ok
+    assert outcome.coverage_path == backend / "coverage.xml"
+    # Repo-relative, like the diff: `backend/app/main.py`, not `app/main.py`.
+    assert outcome.report.get("backend/app/main.py").is_covered(1)
+    assert outcome.report.get("app/main.py") is None
+
+
+def test_two_projects_with_the_same_file_name_stay_two_files(tmp_path):
+    # Left project-relative, both would be `src/index.ts`, merged covered-wins, and the
+    # tested project would answer for the untested one.
+    for name in ("web", "admin"):
+        (tmp_path / name / "src").mkdir(parents=True)
+        (tmp_path / name / "src" / "index.ts").write_text("export {}\n")
+    (tmp_path / "web" / "coverage").mkdir()
+    (tmp_path / "web" / "coverage" / "lcov.info").write_text(
+        "SF:src/index.ts\nDA:1,1\nend_of_record\n"
+    )
+    (tmp_path / "admin" / "coverage").mkdir()
+    (tmp_path / "admin" / "coverage" / "lcov.info").write_text(
+        "SF:src/index.ts\nDA:1,0\nend_of_record\n"
+    )
+
+    result = run_tests(
+        [_nested("javascript", "web"), _nested("javascript", "admin")],
+        tmp_path,
+        runner=lambda cmd, cwd: _completed(0),
+        provision=False,
+    )
+
+    assert result.report.get("web/src/index.ts").is_covered(1)
+    assert not result.report.get("admin/src/index.ts").is_covered(1)
+
+
+def test_a_path_that_is_not_under_the_project_is_left_as_written(tmp_path):
+    # An absolute path, or one rooted at a `<source>` the tool chose, names no file
+    # under backend/. Prefixing it would invent a path that matches nothing and drop
+    # the file from the denominator; left alone, the suffix match still gets a chance.
+    (tmp_path / "backend").mkdir()
+    _cobertura_for(tmp_path / "backend" / "coverage.xml", "/abs/x.py", "pkg/mod.py")
+
+    outcome = run_one(
+        _nested("python", "backend"),
+        tmp_path,
+        runner=lambda cmd, cwd: _completed(0),
+        provision=False,
+    )
+
+    assert {f.path for f in outcome.report.files} == {"/abs/x.py", "pkg/mod.py"}
+
+
+def test_a_failing_suite_that_still_wrote_a_report_says_which_one_failed(tmp_path):
+    _write_cobertura(tmp_path / "coverage.xml")
+    result = run_tests([PY], tmp_path, command="pytest -q", runner=lambda c, w: _completed(1))
+    assert result.broken
+    assert result.failed == (PY,)
+    assert result.outcomes[0].error == "the tests failed (`pytest -q` exited 1)."
+
+
+# ── go: the module path comes off, and the source trims the blocks ────────────
+
+
+GO = ecosystem("go")
+
+
+def test_a_go_profile_is_mapped_through_go_mod_and_trimmed_by_the_source(tmp_path):
+    (tmp_path / "go.mod").write_text('module "example.com/m" // the module\n\ngo 1.22\n')
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "f.go").write_text("package pkg\n\nfunc F() int {\n\treturn 1\n}\n")
+    (tmp_path / "coverage.out").write_text("mode: set\nexample.com/m/pkg/f.go:3.14,5.2 1 1\n")
+
+    outcome = run_one(GO, tmp_path, runner=lambda cmd, cwd: _completed(0), provision=False)
+
+    assert outcome.ok
+    # `pkg/f.go`, not the import path; line 4 only, not the `func` line or the brace.
+    assert outcome.report.get("pkg/f.go").covered == {4}
+
+
+def test_a_nested_go_module_claims_its_own_files(tmp_path):
+    # Longest module path first: `example.com/m/tools` is not a package of `example.com/m`.
+    (tmp_path / "go.mod").write_text("module example.com/m\n")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "go.mod").write_text("module example.com/m/tools\n")
+    profile = tmp_path / "all.out"
+    profile.write_text(
+        "mode: set\nexample.com/m/a.go:1.1,1.5 1 1\nexample.com/m/tools/b.go:1.1,1.5 1 0\n"
+    )
+
+    report = ingest_file(profile, CoverageFormat.GOCOVER, tmp_path)
+
+    assert {f.path for f in report.files} == {"a.go", "tools/b.go"}
+
+
+def test_a_go_profile_from_an_unknown_module_keeps_its_import_path(tmp_path):
+    profile = tmp_path / "c.out"
+    profile.write_text("mode: set\nother.org/x/y.go:1.1,1.5 1 1\n")
+    assert ingest_file(profile, CoverageFormat.GOCOVER, tmp_path).get("other.org/x/y.go")
+
+
+def test_a_file_that_is_not_a_go_profile_is_an_ingest_error(tmp_path):
+    bad = tmp_path / "coverage.out"
+    bad.write_text("not a profile\n")
+    with pytest.raises(IngestError):
+        ingest_file(bad, CoverageFormat.GOCOVER, tmp_path)

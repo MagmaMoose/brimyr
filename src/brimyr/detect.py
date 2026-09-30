@@ -44,6 +44,7 @@ class CoverageFormat(StrEnum):
     LCOV = "lcov"
     COBERTURA = "cobertura"
     JACOCO = "jacoco"
+    GOCOVER = "gocover"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,11 @@ class Ecosystem:
     # An unmeasured half has to name itself, or a repo whose shell scripts are simply
     # not in the denominator reads as a repo whose shell scripts are covered.
     coverage_note: str = ""
+    # Where the project lives, repo-relative with forward slashes; "." is the root. Only
+    # detection sets it, for a project found BELOW a root that detects nothing (see
+    # `_detect_nested`). The runner runs the tests there, looks for the coverage file
+    # there, and maps the report's project-relative paths back onto the repo.
+    project_dir: str = "."
 
     def command_str(self) -> str:
         return " ".join(self.test_command)
@@ -306,6 +312,36 @@ def _java_is_maven(root: Path) -> bool:
     return (root / "pom.xml").is_file()
 
 
+def _go_ignores(part: str) -> bool:
+    """A directory the go tool itself skips when expanding ``./...``.
+
+    ``testdata`` holds fixtures by convention, and the tool ignores any directory
+    whose name starts with ``.`` or ``_``. A ``_test.go`` in one of them is never run,
+    so it is not evidence that anything will be.
+    """
+    return part == "testdata" or part.startswith((".", "_"))
+
+
+def _go_has_test_signal(root: Path) -> bool:
+    """True if ``go test ./...`` from ``root`` would run at least one test file.
+
+    ``go.mod`` alone is not a suite: a module of generated clients or a tool with no
+    tests would run `go test`, write a profile of zeros, and gate every PR against
+    code nobody claimed was tested. A ``_test.go`` file is the signal, and it has to
+    be one the ROOT module's ``./...`` reaches: not vendored, not under a directory
+    the go tool skips, and not inside a nested module with its own ``go.mod``, which
+    ``./...`` stops at exactly as pytest's root collection should stop at a nested
+    ``pyproject.toml``.
+    """
+    for match in root.glob("**/*_test.go"):
+        parts = match.relative_to(root).parts
+        if not _VENDOR_DIRS.isdisjoint(parts) or any(_go_ignores(p) for p in parts[:-1]):
+            continue
+        if _owned_by_root(root, match, ("go.mod",)):
+            return True
+    return False
+
+
 #: Directories a bats search must never descend into, on top of :data:`_VENDOR_DIRS`.
 #: The conventional bats layout VENDORS ITS OWN FRAMEWORK — `test/bats` is bats-core as a
 #: submodule, `test/test_helper/bats-support` and friends are its helper libraries — and
@@ -464,6 +500,22 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         confirm=_java_is_maven,
     ),
     Ecosystem(
+        key="go",
+        label="Go",
+        markers=("go.mod",),
+        # Go's own coverage, no plugin to install: `-coverprofile` turns instrumentation
+        # on and writes ONE merged profile for every package `./...` matched, including
+        # (Go 1.22+) the untested ones, at count 0. No `-race`: it needs cgo and a C
+        # toolchain the runner may not have, and it measures nothing extra. No
+        # `-coverpkg`: each package is measured by its own tests, which is what the
+        # repo's own `go test -cover` reports and what SonarQube's docs run.
+        test_command=("go", "test", "-coverprofile=coverage.out", "./..."),
+        coverage_format=CoverageFormat.GOCOVER,
+        coverage_paths=("coverage.out",),
+        sonar_property="sonar.go.coverage.reportPaths",
+        confirm=_go_has_test_signal,
+    ),
+    Ecosystem(
         key="shell",
         label="Shell",
         # Deliberately over-broad, and safe only because `confirm` is strict: a bats
@@ -545,7 +597,7 @@ def _javascript_variant(eco: Ecosystem, root: Path) -> Ecosystem:
 
 
 def ecosystem(key: str) -> Ecosystem | None:
-    """Look up a built-in ecosystem by key (python | javascript | dotnet | java | shell).
+    """Look up a built-in ecosystem by key (python | javascript | dotnet | java | go | shell).
 
     The table's own row, untailored. Callers holding a repo path should pass the result
     through :func:`for_repo`.
@@ -592,23 +644,119 @@ def for_repo(eco: Ecosystem, repo: str | Path = ".") -> Ecosystem:
     return eco
 
 
-def detect_ecosystems(repo: str | Path = ".") -> list[Ecosystem]:
-    """Every built-in ecosystem whose markers are present in ``repo``.
-
-    An ecosystem with a ``confirm`` predicate must also pass it — markers alone can
-    over-detect (a bare ``package.json`` with no JS tests). Force one explicitly
-    with ``--ecosystem`` to bypass detection entirely.
-    """
-    root = Path(repo)
+def _detect_in(root: Path, rows: tuple[Ecosystem, ...]) -> list[Ecosystem]:
+    """The rows whose markers are in ``root`` and whose ``confirm`` agrees, tailored to it."""
     found = [
         eco
-        for eco in ECOSYSTEMS
+        for eco in rows
         if _has_marker(root, eco.markers) and (eco.confirm is None or eco.confirm(root))
     ]
     return [
         for_repo(_javascript_variant(eco, root) if eco.key == "javascript" else eco, root)
         for eco in found
     ]
+
+
+#: Rows a nested search may find. Only the ones whose ``confirm`` proves a SUITE exists,
+#: not merely a project: a test file (python, go) or a declared test script (javascript).
+#: Java's predicate is "there is a pom.xml" and .NET has none, so below the root they
+#: would find every library module and run `mvn test` / `dotnet test` where nothing is
+#: tested, which is a red build on a repo with no fault. .NET is also wrapped by the
+#: Sonar scanner from the repo root, and `action.yml`'s scanner install has to agree with
+#: its markers. Shell is out because its search is already repo-wide by construction.
+_NESTED_KEYS = frozenset({"python", "javascript", "go"})
+
+#: How far below the root a project may sit: `backend/`, `services/api/`,
+#: `apps/web/client/`. Bounded so the fallback costs a few directory listings, not a
+#: walk of the whole tree.
+_NESTED_MAX_DEPTH = 3
+
+#: Directories that hold test DATA or build OUTPUT, never a project of their own. A
+#: fixture repo checked in under `tests/fixtures/` is shaped exactly like a project on
+#: purpose; running its "suite" would gate the repo on a sample.
+_NOT_A_PROJECT = frozenset(
+    {
+        "fixtures",
+        "__fixtures__",
+        "testdata",
+        "test_data",
+        "__pycache__",
+        "dist",
+        "build",
+        "target",
+        "coverage",
+        "site",
+    }
+)
+
+
+def _subdirectories(parent: Path) -> list[Path]:
+    """``parent``'s children worth searching for a project, in a stable order."""
+    try:
+        children = sorted(parent.iterdir())
+    except OSError:
+        return []
+    return [
+        child
+        for child in children
+        # A symlinked directory can loop back up the tree, and one pointing outside the
+        # checkout is not this repo's project.
+        if child.is_dir()
+        and not child.is_symlink()
+        and not child.name.startswith(".")
+        and child.name not in _VENDOR_DIRS
+        and child.name not in _NOT_A_PROJECT
+    ]
+
+
+def _detect_nested(root: Path) -> list[Ecosystem]:
+    """Projects below a root that detected nothing, shallowest first.
+
+    A repo like MagmaMoose/dunmir keeps everything in `agent/`, `backend/` and
+    `frontend/`, each with its own manifest and suite, and nothing at the root. Root-only
+    detection found no marker there and reported "no test suite detected" over ~2,500
+    tests. Each project found here runs from its own directory, in its own environment,
+    exactly as the repo's CI runs it.
+
+    A directory that detects something is not descended into: its own test command
+    already covers its subtree, and a JS workspace whose root script runs every package
+    would otherwise run each package twice.
+    """
+    rows = tuple(eco for eco in ECOSYSTEMS if eco.key in _NESTED_KEYS)
+    found: list[Ecosystem] = []
+    frontier = [root]
+    for _ in range(_NESTED_MAX_DEPTH):
+        deeper: list[Path] = []
+        for parent in frontier:
+            for child in _subdirectories(parent):
+                here = _detect_in(child, rows)
+                if not here:
+                    deeper.append(child)
+                    continue
+                rel = child.relative_to(root).as_posix()
+                found.extend(
+                    replace(eco, project_dir=rel, label=f"{eco.label} in {rel}/") for eco in here
+                )
+        frontier = deeper
+    return found
+
+
+def detect_ecosystems(repo: str | Path = ".", *, nested: bool = True) -> list[Ecosystem]:
+    """Every built-in ecosystem whose markers are present in ``repo``.
+
+    An ecosystem with a ``confirm`` predicate must also pass it — markers alone can
+    over-detect (a bare ``package.json`` with no JS tests). Force one explicitly
+    with ``--ecosystem`` to bypass detection entirely.
+
+    Only when the root detects NOTHING are the directories below it searched (see
+    :func:`_detect_nested`). A fallback and not a second pass: a repo that detects
+    something today keeps exactly the verdict it has, and the only runs that change are
+    the ones that currently report "no test suite detected" and gate nothing.
+    ``nested=False`` keeps the search at the root, for a caller whose explicit test
+    command has to run where they asked for it.
+    """
+    root = Path(repo)
+    return _detect_in(root, ECOSYSTEMS) or (_detect_nested(root) if nested else [])
 
 
 def locate_coverage_files(eco: Ecosystem, repo: str | Path = ".") -> list[Path]:

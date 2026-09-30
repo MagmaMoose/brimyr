@@ -316,12 +316,16 @@ def _nested_project(tmp_path, directory: str = "broker", marker: str = "pyprojec
 
 
 def test_a_nested_projects_suite_is_not_this_repos_signal(tmp_path):
-    assert detect_ecosystems(_nested_project(tmp_path)) == []
+    # Not the ROOT's suite: pytest at the root would collect broker's files and die
+    # importing them. It is found, but as broker's own project, run from broker/.
+    found = detect_ecosystems(_nested_project(tmp_path))
+    assert [(e.key, e.project_dir) for e in found] == [("python", "broker")]
 
 
 @pytest.mark.parametrize("marker", ["pyproject.toml", "setup.py", "setup.cfg"])
 def test_any_project_marker_makes_a_subdirectory_its_own_project(tmp_path, marker):
-    assert detect_ecosystems(_nested_project(tmp_path, marker=marker)) == []
+    found = detect_ecosystems(_nested_project(tmp_path, marker=marker))
+    assert [e.project_dir for e in found] == ["broker"]
 
 
 def test_the_roots_own_marker_is_not_treated_as_nested(tmp_path):
@@ -500,3 +504,153 @@ def test_a_discovered_path_reaches_the_shell_quoted(tmp_path):
     _bats(tmp_path / "my tests" / "scan.bats")
     found = for_repo(ecosystem("shell"), tmp_path)
     assert found.command_str() == "bats --recursive 'my tests'"
+
+
+# ─────────────────────────────── go ────────────────────────────────
+#
+# `go.mod` says there is a module, not that anything tests it. The signal is a
+# `_test.go` that `go test ./...` from the root would actually run.
+
+
+def _go_module(root, test_at="internal/x/x_test.go"):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "go.mod").write_text("module example.com/m\n\ngo 1.22\n")
+    if test_at:
+        (root / test_at).parent.mkdir(parents=True, exist_ok=True)
+        (root / test_at).write_text("package x\n")
+    return root
+
+
+def test_detect_go_from_a_module_with_a_test_file(tmp_path):
+    found = detect_ecosystems(_go_module(tmp_path))
+    assert [e.key for e in found] == ["go"]
+    assert found[0].coverage_format is CoverageFormat.GOCOVER
+    assert found[0].command_str() == "go test -coverprofile=coverage.out ./..."
+    assert ecosystem("go").sonar_property == "sonar.go.coverage.reportPaths"
+
+
+def test_a_module_with_no_tests_is_not_a_suite(tmp_path):
+    assert detect_ecosystems(_go_module(tmp_path, test_at=None)) == []
+
+
+@pytest.mark.parametrize(
+    "test_at",
+    ["vendor/dep/dep_test.go", "testdata/case_test.go", "_scratch/x_test.go", ".hidden/x_test.go"],
+)
+def test_test_files_go_itself_never_runs_are_not_a_signal(tmp_path, test_at):
+    assert detect_ecosystems(_go_module(tmp_path, test_at=test_at)) == []
+
+
+def test_a_nested_modules_tests_are_not_the_root_modules(tmp_path):
+    # `./...` stops at a nested go.mod, so the root module is untested. The nested one
+    # is found as its own project, which is where its tests actually run.
+    _go_module(tmp_path, test_at=None)
+    _go_module(tmp_path / "tools", test_at="gen/gen_test.go")
+    found = detect_ecosystems(tmp_path)
+    assert [(e.key, e.project_dir) for e in found] == [("go", "tools")]
+
+
+# ─────────────────────── nested projects ───────────────────────
+#
+# A fallback, not a second pass: only a root that detects nothing is searched below.
+# MagmaMoose/dunmir is the live case, `agent/`, `backend/` and `frontend/` each with
+# its own manifest and suite and nothing at the root, reported as "no test suite
+# detected" over ~2,500 tests.
+
+
+def _python_project(root, name="app"):
+    (root / "tests").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(f"[project]\nname = '{name}'\n")
+    (root / "tests" / "test_it.py").write_text("def test_x(): pass\n")
+    return root
+
+
+def _vitest_project(root):
+    root.mkdir(parents=True)
+    (root / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "^4"}})
+    )
+    return root
+
+
+def test_projects_below_an_empty_root_are_each_found_where_they_live(tmp_path):
+    _python_project(tmp_path / "agent")
+    _python_project(tmp_path / "backend")
+    _vitest_project(tmp_path / "frontend")
+
+    found = detect_ecosystems(tmp_path)
+
+    assert [(e.key, e.project_dir) for e in found] == [
+        ("python", "agent"),
+        ("python", "backend"),
+        ("javascript", "frontend"),
+    ]
+    # The variant is chosen from the project's OWN package.json, not the root's.
+    assert "vitest" in found[2].test_command
+    # Every message and the summary name the project, not just the language.
+    assert [e.label for e in found] == [
+        "Python in agent/",
+        "Python in backend/",
+        "JavaScript / TypeScript (vitest) in frontend/",
+    ]
+
+
+def test_a_root_that_detects_something_is_never_searched_below(tmp_path):
+    # caldrith's shape: a root python project and a console/ frontend. Its verdict
+    # today covers the root only, and a release must not change it underneath it.
+    _python_project(tmp_path)
+    _vitest_project(tmp_path / "console" / "frontend")
+    assert [(e.key, e.project_dir) for e in detect_ecosystems(tmp_path)] == [("python", ".")]
+
+
+def test_nested_projects_up_to_three_levels_down_are_found(tmp_path):
+    _python_project(tmp_path / "services" / "billing" / "api")
+    _python_project(tmp_path / "a" / "b" / "c" / "too-deep")
+    assert [e.project_dir for e in detect_ecosystems(tmp_path)] == ["services/billing/api"]
+
+
+def test_a_found_project_is_not_searched_again_inside(tmp_path):
+    # A JS workspace whose own test script runs every package would run each twice.
+    _vitest_project(tmp_path / "web")
+    _vitest_project(tmp_path / "web" / "packages" / "ui")
+    assert [e.project_dir for e in detect_ecosystems(tmp_path)] == ["web"]
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["tests/fixtures/sample", "node_modules/pkg", ".github/tooling", "vendor/lib", "dist/app"],
+)
+def test_fixtures_vendored_trees_and_build_output_are_not_projects(tmp_path, where):
+    # A fixture repo is shaped like a project on purpose; gating on its "suite" would
+    # gate the repo on a sample.
+    _python_project(tmp_path / where)
+    assert detect_ecosystems(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("manifest", "body"),
+    [("pom.xml", "<project/>"), ("App.csproj", "<Project/>"), ("run.bats", "@test x { true; }")],
+)
+def test_only_ecosystems_that_prove_a_suite_are_searched_below(tmp_path, manifest, body):
+    # Java's predicate is "a pom.xml exists" and .NET has none: below the root they
+    # would run `mvn test` / `dotnet test` in every library module. Shell's own search
+    # is already repo-wide.
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc" / manifest).write_text(body)
+    assert detect_ecosystems(tmp_path) == []
+
+
+def test_a_symlinked_directory_is_not_followed(tmp_path):
+    _python_project(tmp_path / "real")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    _python_project(outside)
+    (tmp_path / "link").symlink_to(outside, target_is_directory=True)
+    assert [e.project_dir for e in detect_ecosystems(tmp_path)] == ["real"]
+
+
+def test_a_repo_with_nothing_anywhere_still_detects_nothing(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "requirements.txt").write_text("mkdocs\n")
+    (tmp_path / "charts" / "app").mkdir(parents=True)
+    (tmp_path / "charts" / "app" / "Chart.yaml").write_text("name: app\n")
+    assert detect_ecosystems(tmp_path) == []
