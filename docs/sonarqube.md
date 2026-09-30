@@ -34,6 +34,7 @@ gate is computed locally from the coverage file and never talks to SonarQube.
 | Python | `sonar-scanner` (after the tests) | `sonar.python.coverage.reportPaths` |
 | JavaScript / TypeScript | `sonar-scanner` (after the tests) | `sonar.javascript.lcov.reportPaths` |
 | Java | `sonar-scanner` (after the tests) | `sonar.coverage.jacoco.xmlReportPaths` |
+| Go | `sonar-scanner` (after the tests) | `sonar.go.coverage.reportPaths` (the profile as `go test` wrote it) |
 | .NET | `dotnet sonarscanner`, **wrapping the build** | `sonar.cs.cobertura.reportsPaths` |
 | Shell | `sonar-scanner` (after the tests) | none: Sonar has no importer for shell coverage, so nothing is uploaded for it |
 

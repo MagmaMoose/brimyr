@@ -1326,3 +1326,169 @@ def test_the_percent_that_broke_it_still_reads_as_a_percent():
     that tells people a timeout is not 0% coverage."""
     (_, ci) = next((n, p) for n, p in _every_parser() if n == "ci")
     assert "never 0% coverage" in ci.format_help()
+
+
+# ── go: a coverprofile is a coverage file like any other ─────────────────────
+
+
+@pytest.fixture
+def go_repo(tmp_path):
+    """A Go module: base commit, then a head commit adding `Double` to pkg/f.go."""
+    root = tmp_path / "gorepo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "go.mod").write_text("module example.com/m\n\ngo 1.22\n")
+    (root / "pkg").mkdir()
+    (root / "pkg" / "f.go").write_text("package pkg\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "base")
+    base = _rev(root)
+    (root / "pkg" / "f.go").write_text(
+        "package pkg\n\n// Double doubles.\nfunc Double(x int) int {\n\tif x < 0 {\n"
+        "\t\treturn 0\n\t}\n\treturn 2 * x\n}\n"
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "head")
+    return root, base
+
+
+def _go_profile(path, *, negative_ran):
+    path.write_text(
+        "mode: set\n"
+        "example.com/m/pkg/f.go:4.25,5.11 1 1\n"
+        f"example.com/m/pkg/f.go:5.11,7.3 1 {int(negative_ran)}\n"
+        "example.com/m/pkg/f.go:8.2,8.14 1 1\n"
+    )
+
+
+def test_a_go_profile_is_sniffed_mapped_and_gated(go_repo, tmp_path):
+    repo_dir, base = go_repo
+    profile = tmp_path / "coverage.out"
+    _go_profile(profile, negative_ran=False)
+    out = tmp_path / "out.json"
+
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            str(profile),
+            "--base",
+            base,
+            "--head",
+            "HEAD",
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+            "--json-out",
+            str(out),
+            "--quiet",
+        ]
+    )
+
+    import json
+
+    files = json.loads(out.read_text())["files"]
+    # The import path came off via go.mod, and only statement lines count: the
+    # comment, the `func` line and both closing braces are not in the denominator.
+    assert files == [
+        {"path": "pkg/f.go", "covered": 2, "total": 3, "percent": 66.67, "missing_lines": [6]}
+    ]
+    assert code == EXIT_BLOCKED
+
+
+def test_an_explicit_gocover_suffix_is_honoured(go_repo, tmp_path):
+    repo_dir, base = go_repo
+    profile = tmp_path / "cover.txt"
+    _go_profile(profile, negative_ran=True)
+    code = main(
+        [
+            "coverage",
+            "--coverage-file",
+            f"{profile}:gocover",
+            "--base",
+            base,
+            "--head",
+            "HEAD",
+            "--repo",
+            str(repo_dir),
+            "--min-lines",
+            "0",
+            "--quiet",
+        ]
+    )
+    assert code == 0
+
+
+def test_a_file_of_unknown_format_names_gocover_among_the_ways_out(tmp_path, capsys):
+    unknown = tmp_path / "cov.dat"
+    unknown.write_text("nothing recognisable\n")
+    code = main(["coverage", "--coverage-file", str(unknown), "--base", "main", "--quiet"])
+    assert code == EXIT_ERROR
+    assert "':gocover'" in capsys.readouterr().err
+
+
+def test_an_unreadable_out_file_defers_to_the_real_read_error(tmp_path):
+    from brimyr.cli import _parse_coverage_arg
+    from brimyr.detect import CoverageFormat
+
+    assert _parse_coverage_arg(str(tmp_path / "missing.out"))[1] is CoverageFormat.GOCOVER
+
+
+def test_a_go_profile_reaches_sonar_under_the_go_property(tmp_path):
+    import argparse
+
+    from brimyr.cli import _sonar_paths_for_specs
+    from brimyr.detect import CoverageFormat
+
+    args = argparse.Namespace(sonar_url="https://sonar.example")
+    specs = [(tmp_path / "coverage.out", CoverageFormat.GOCOVER)]
+    assert _sonar_paths_for_specs(specs, args) == {
+        "sonar.go.coverage.reportPaths": (str(tmp_path / "coverage.out"),)
+    }
+
+
+# ── nested projects: a broken run names the project that broke ───────────────
+
+
+def test_a_broken_nested_project_is_named_in_the_summary(repo, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from brimyr import cli as cli_mod
+    from brimyr.detect import ecosystem
+    from brimyr.runner import RunOutcome, RunResult
+
+    backend = replace(ecosystem("python"), project_dir="backend", label="Python in backend/")
+    frontend = replace(ecosystem("javascript"), project_dir="frontend", label="JS in frontend/")
+    measured = RunOutcome(frontend, 0, (), None)
+    broken = RunOutcome(backend, 1, (), None, error="the tests failed (`pytest` exited 1).")
+    monkeypatch.setattr(cli_mod, "detect_ecosystems", lambda repo, **kw: [backend, frontend])
+    monkeypatch.setattr(cli_mod, "run_tests", lambda *a, **k: RunResult((broken, measured)))
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    repo_dir, base = repo
+    code = main(["ci", "--mode", "pr", "--base", base, "--repo", str(repo_dir), "--quiet"])
+
+    assert code == EXIT_ERROR
+    text = summary.read_text()
+    assert "**Ecosystem:** Python in backend/, JS in frontend/" in text
+    # Both failed (the frontend measured nothing), and both are named.
+    assert "Broken test run** in Python in backend/, JS in frontend/" in text
+
+
+def test_an_explicit_test_command_is_never_run_inside_nested_projects(tmp_path, capsys):
+    # The caller's own command runs at the root. Detection below the root would run it once
+    # per project directory, where `make test` means something else or nothing at all.
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "pyproject.toml").write_text("[project]\nname = 'b'\n")
+    (tmp_path / "backend" / "tests" / "test_x.py").write_text("def test_x(): pass\n")
+    marker = tmp_path / "ran"
+
+    code = main(
+        ["ci", "--mode", "baseline", "--repo", str(tmp_path), "--test-command", f"touch {marker}"]
+    )
+
+    assert code == 0
+    assert not marker.exists()
+    assert "no test suite detected" in capsys.readouterr().err

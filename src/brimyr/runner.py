@@ -32,6 +32,9 @@ without a real toolchain.
 from __future__ import annotations
 
 import functools
+import os
+import posixpath
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -39,9 +42,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from brimyr.coverage.cobertura import CoberturaError, parse_cobertura
+from brimyr.coverage.gocover import GoCoverError, parse_gocover
 from brimyr.coverage.jacoco import JacocoError, parse_jacoco
 from brimyr.coverage.lcov import parse_lcov
-from brimyr.coverage.model import CoverageReport, merge_reports
+from brimyr.coverage.model import CoverageReport, merge_reports, remap_paths
 from brimyr.detect import CoverageFormat, Ecosystem, locate_coverage_files
 from brimyr.provision import Provision, Which
 from brimyr.provision import plan as plan_provision
@@ -86,7 +90,73 @@ def parse_coverage_text(text: str, fmt: CoverageFormat) -> CoverageReport:
         return parse_cobertura(text)
     if fmt is CoverageFormat.JACOCO:
         return parse_jacoco(text)
+    if fmt is CoverageFormat.GOCOVER:
+        return parse_gocover(text)
     raise IngestError(f"unsupported coverage format: {fmt}")
+
+
+#: Directory names a `go.mod` search skips: the go tool's own exclusions plus the usual
+#: vendored trees. `vendor/` holds copies of dependencies, never this repo's modules.
+_GO_MOD_SKIP = frozenset({"vendor", "node_modules", "testdata"})
+
+#: `module example.com/m`, `module "example.com/m"`, either with a trailing comment.
+_GO_MODULE = re.compile(r'^\s*module\s+"?([^\s"]+)"?\s*(?://.*)?$', re.MULTILINE)
+
+
+def _go_modules(repo: Path) -> list[tuple[str, str]]:
+    """``(module path, repo-relative directory)`` for every ``go.mod``, longest path first.
+
+    Longest first so that a nested module (``example.com/m/tools``) claims its own files
+    before the root module (``example.com/m``) can mistake them for a package of its own.
+    """
+    modules: list[tuple[str, str]] = []
+    for directory, subdirs, files in os.walk(repo):
+        subdirs[:] = sorted(
+            d for d in subdirs if d not in _GO_MOD_SKIP and not d.startswith((".", "_"))
+        )
+        if "go.mod" not in files:
+            continue
+        try:
+            text = (Path(directory) / "go.mod").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = _GO_MODULE.search(text)
+        if match:
+            modules.append((match.group(1), Path(directory).relative_to(repo).as_posix()))
+    return sorted(modules, key=lambda item: len(item[0]), reverse=True)
+
+
+def _go_path_resolver(repo: Path) -> Callable[[str], str]:
+    """Map a coverage profile's import path to a repo-relative file path.
+
+    ``github.com/org/repo/internal/x/x.go`` names the file by its module path, which the
+    diff never carries. The module path is whatever ``go.mod`` declares, so it is read
+    rather than guessed from the remote URL. Unresolvable paths come back unchanged,
+    where the suffix match in :mod:`brimyr.coverage.patch` still gets its chance.
+    """
+    modules = _go_modules(repo)
+
+    def resolve(name: str) -> str:
+        for module, directory in modules:
+            if name.startswith(module + "/"):
+                rest = name[len(module) + 1 :]
+                return rest if directory == "." else f"{directory}/{rest}"
+        return name
+
+    return resolve
+
+
+def _source_reader(repo: Path) -> Callable[[str], list[str] | None]:
+    """Read a repo-relative (or absolute) source file as lines, ``None`` when it is absent."""
+
+    def read(path: str) -> list[str] | None:
+        target = Path(path) if Path(path).is_absolute() else repo / path
+        try:
+            return target.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+
+    return read
 
 
 def _jacoco_path_resolver(report_path: Path, repo: Path) -> Callable[[str], str]:
@@ -159,9 +229,54 @@ def ingest_file(path: str | Path, fmt: CoverageFormat, repo: str | Path = ".") -
             # Only JaCoCo needs this: its paths carry no module prefix, so two modules'
             # identically-named classes would merge into one. See _jacoco_path_resolver.
             return parse_jacoco(text, resolve_path=_jacoco_path_resolver(p, Path(repo)))
+        if fmt is CoverageFormat.GOCOVER:
+            # Go names files by import path and measures blocks, not lines: the module
+            # path comes off via go.mod, and the source is what trims a block to the
+            # lines its statements are on. See brimyr.coverage.gocover.
+            root = Path(repo)
+            return parse_gocover(
+                text, resolve_path=_go_path_resolver(root), source_lines=_source_reader(root)
+            )
         return parse_coverage_text(text, fmt)
-    except (CoberturaError, JacocoError) as exc:
+    except (CoberturaError, JacocoError, GoCoverError) as exc:
         raise IngestError(str(exc)) from exc
+
+
+#: `C:/src/x.cs` once normalized. A drive-letter path is absolute on the runner that
+#: wrote it, and prefixing a project directory onto it would invent a path.
+_WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:/")
+
+
+def _project_root(eco: Ecosystem, repo: str | Path) -> Path:
+    """Where ``eco``'s project lives: the repo itself, or the directory detection found."""
+    return Path(repo) if eco.project_dir == "." else Path(repo) / eco.project_dir
+
+
+def _onto_repo(report: CoverageReport, eco: Ecosystem, project_root: Path) -> CoverageReport:
+    """Rewrite a nested project's report so its paths are repo-relative, like the diff's.
+
+    A run in `backend/` names `app/main.py`, and the diff names `backend/app/main.py`.
+    The suffix match would usually pair them anyway, which is exactly why this is not
+    left to it: two projects that both have `src/index.ts` produce the SAME string,
+    `merge_reports` folds them covered-wins, and the tested project answers for the
+    untested one (the JaCoCo module-prefix bug again, by a new route).
+
+    A path is prefixed only when the file really is under the project. Anything else
+    (absolute, already repo-relative, rooted at some `<source>` the tool chose) is left
+    exactly as written: inventing a path that names no file would drop it from the
+    denominator, which is the silent pass this whole module exists to prevent.
+    """
+    if eco.project_dir == ".":
+        return report
+
+    def rename(path: str) -> str:
+        if path.startswith("/") or _WINDOWS_ABSOLUTE.match(path):
+            return path
+        if not (project_root / path).is_file():
+            return path
+        return posixpath.normpath(f"{eco.project_dir}/{path}")
+
+    return remap_paths(report, rename)
 
 
 @dataclass(frozen=True)
@@ -229,6 +344,11 @@ class RunResult:
     def report(self) -> CoverageReport:
         """The merged coverage across all ecosystems that produced one."""
         return merge_reports(o.report for o in self.outcomes if o.report is not None)
+
+    @property
+    def failed(self) -> tuple[Ecosystem, ...]:
+        """The ecosystems whose run broke, so the summary can name them."""
+        return tuple(o.ecosystem for o in self.outcomes if not o.ok)
 
     @property
     def coverage_paths(self) -> tuple[Path, ...]:
@@ -306,17 +426,20 @@ def run_one(
     # Bound to the DEFAULT runner only: `Runner` is a two-argument contract and every
     # injected test runner implements it, so widening it here would break them all.
     run_fn = runner or functools.partial(_default_runner, timeout=timeout)
-    repo_str = str(repo)
+    # The project's own directory, not always the repo root: a nested project (see
+    # detect._detect_nested) installs, runs and writes its report where it lives.
+    root = _project_root(eco, repo)
+    cwd = str(root)
 
     # An explicit `command` is the caller's own contract: they said how to run the
     # tests, so wrapping it in a dependency manager they did not ask for would change
     # what they asked to run. Their setup is theirs to do.
-    prov = plan_provision(eco, repo, which=which) if provision and command is None else Provision()
+    prov = plan_provision(eco, root, which=which) if provision and command is None else Provision()
     cmd = command or prov.command or eco.command_str()
 
     for setup_cmd in prov.setup:
         try:
-            setup = run_fn(setup_cmd, repo_str)
+            setup = run_fn(setup_cmd, cwd)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return RunOutcome(
                 eco,
@@ -342,7 +465,7 @@ def run_one(
             )
 
     try:
-        completed = run_fn(cmd, repo_str)
+        completed = run_fn(cmd, cwd)
     except subprocess.TimeoutExpired:
         # A broken run, not 0% coverage: the tests never finished, so there is no
         # verdict to give. Exit 2, loudly.
@@ -368,7 +491,7 @@ def run_one(
             provision_note=prov.note,
         )
 
-    coverage_files = locate_coverage_files(eco, repo)
+    coverage_files = locate_coverage_files(eco, root)
     if not coverage_files:
         # 127 means the shell never found the binary, so "did the test run emit
         # coverage?" is the wrong question and sent everyone looking at their coverage
@@ -429,15 +552,23 @@ def run_one(
     reports: list[CoverageReport] = []
     for path in coverage_files:
         try:
-            reports.append(ingest_file(path, eco.coverage_format, repo))
+            reports.append(ingest_file(path, eco.coverage_format, root))
         except IngestError as exc:
             # One unparseable report is a broken run, not a quietly smaller number.
             return RunOutcome(
                 eco, completed.returncode, paths, None, error=str(exc), provision_note=prov.note
             )
 
+    # Said per ecosystem, because a run can now span several projects and "the tests
+    # failed" with no name attached sends the reader through every suite's log.
+    failed = completed.returncode != 0
     return RunOutcome(
-        eco, completed.returncode, paths, merge_reports(reports), provision_note=prov.note
+        eco,
+        completed.returncode,
+        paths,
+        _onto_repo(merge_reports(reports), eco, root),
+        error=f"the tests failed (`{cmd}` exited {completed.returncode})." if failed else None,
+        provision_note=prov.note,
     )
 
 

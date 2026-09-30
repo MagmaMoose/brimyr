@@ -42,6 +42,7 @@ from brimyr import github_comment as comment_mod
 from brimyr import report as report_mod
 from brimyr import sonar as sonar_mod
 from brimyr.coverage.diff import DiffIndex
+from brimyr.coverage.gocover import is_gocover
 from brimyr.coverage.jacoco import is_jacoco
 from brimyr.coverage.model import CoverageReport, merge_reports
 from brimyr.coverage.patch import PatchPolicy, compute_patch_coverage, compute_total_coverage
@@ -107,7 +108,12 @@ def _fail(message: str) -> int:
 
 
 def _parse_coverage_arg(spec: str) -> tuple[Path, CoverageFormat]:
-    """Parse ``path[:format]`` (format ``lcov``|``cobertura``; inferred from ext)."""
+    """Parse ``path[:format]`` (format ``lcov``|``cobertura``|``jacoco``|``gocover``).
+
+    Without a format it is inferred: from the extension where that decides it, from the
+    content where it does not (``.xml`` is two formats; a Go profile has no extension of
+    its own and is conventionally ``coverage.out``).
+    """
     path_part, sep, fmt_part = spec.rpartition(":")
     # rpartition splits on the LAST ':'; on Windows a drive letter has a ':' too,
     # so only treat the tail as a format when it names one.
@@ -117,11 +123,29 @@ def _parse_coverage_arg(spec: str) -> tuple[Path, CoverageFormat]:
     fmt = _EXT_FORMAT.get(path.suffix.lower())
     if fmt is None and path.suffix.lower() == ".xml":
         fmt = _sniff_xml_format(path)
+    if fmt is None and _is_go_profile(path):
+        fmt = CoverageFormat.GOCOVER
     if fmt is None:
         raise ValueError(
-            f"cannot infer coverage format for {path} — append ':lcov', ':cobertura' or ':jacoco'"
+            f"cannot infer coverage format for {path} — append ':lcov', ':cobertura', "
+            "':jacoco' or ':gocover'"
         )
     return path, fmt
+
+
+def _is_go_profile(path: Path) -> bool:
+    """True if ``path`` opens with a Go profile's ``mode:`` line.
+
+    An unreadable ``.out`` resolves to a Go profile for the reason an unreadable
+    ``.xml`` resolves to Cobertura: `.out` is what `go test -coverprofile` is
+    conventionally pointed at, and `ingest_file` raises the real "could not read"
+    moments later, which beats an error about formats.
+    """
+    try:
+        head = path.read_bytes()[:_XML_HEAD_BYTES].decode("utf-8", errors="replace")
+    except OSError:
+        return path.suffix.lower() == ".out"
+    return is_gocover(head)
 
 
 def _sniff_xml_format(path: Path) -> CoverageFormat:
@@ -544,6 +568,7 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 _FORMAT_SONAR_PROPERTY = {
     CoverageFormat.LCOV: "sonar.javascript.lcov.reportPaths",
     CoverageFormat.JACOCO: "sonar.coverage.jacoco.xmlReportPaths",
+    CoverageFormat.GOCOVER: "sonar.go.coverage.reportPaths",
 }
 
 
@@ -603,6 +628,9 @@ class Collected:
     #: failure — but never silent either: their changed lines are absent from the
     #: denominator rather than uncovered in it.
     unmeasured: list[Ecosystem] = field(default_factory=list)
+    #: Ecosystems whose run broke. Named in the summary: a repo of three projects that
+    #: reports "broken test run" and nothing else leaves the reader three logs to read.
+    failed: list[Ecosystem] = field(default_factory=list)
 
 
 def _collect_coverage(
@@ -656,7 +684,10 @@ def _collect_coverage(
             # placeholder shell command would look for a suite in the wrong directory.
             ecosystems.append(for_repo(eco, args.repo))
     else:
-        ecosystems = detect_ecosystems(args.repo)
+        # An explicit `test_command` is the caller's own command, and it runs at the root
+        # exactly as a forced ecosystem does: found below the root, it would be run once in
+        # every project directory, where `make test` means something else or nothing.
+        ecosystems = detect_ecosystems(args.repo, nested=not args.test_command)
 
     if not ecosystems:
         # Auto-detection only. A forced `--ecosystem` cannot reach here: every key
@@ -721,6 +752,7 @@ def _collect_coverage(
         sonar_paths=sonar_paths,
         coverage_paths=coverage_paths,
         unmeasured=list(result.unmeasured),
+        failed=list(result.failed),
     )
 
 
@@ -836,7 +868,9 @@ def _maybe_run_sonar(
     return result.message
 
 
-def _maybe_render_html(args: argparse.Namespace, coverage_paths: list[str]) -> str | None:
+def _maybe_render_html(
+    args: argparse.Namespace, coverage_paths: list[str], ecosystems: Sequence[Ecosystem] = ()
+) -> str | None:
     """Render the coverage reports to a browsable HTML artifact. Never blocks.
 
     Off unless asked for: it costs a ReportGenerator (and therefore .NET) install, which
@@ -851,7 +885,16 @@ def _maybe_render_html(args: argparse.Namespace, coverage_paths: list[str]) -> s
         target,
         args.repo,
         title=os.environ.get("GITHUB_REPOSITORY", "") or "coverage",
-        source_dirs=(args.repo,),
+        # A nested project's report names files relative to its own directory, so the
+        # renderer is pointed there as well as at the root.
+        source_dirs=(
+            args.repo,
+            *dict.fromkeys(
+                str(Path(args.repo) / eco.project_dir)
+                for eco in ecosystems
+                if eco.project_dir != "."
+            ),
+        ),
     )
     if not result.ok:
         _warn(f"HTML coverage report: {result.message}")
@@ -1016,7 +1059,7 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
     # no coverage. Without this the empty report falls through to the ordinary path and
     # renders "100% · 0/0 lines", which is what a well-tested PR looks like.
     no_coverage = bool(unmeasured) and not report and not broken
-    html_message = _maybe_render_html(args, collected.coverage_paths)
+    html_message = _maybe_render_html(args, collected.coverage_paths, collected.ecosystems)
 
     # One policy for both numbers. Total coverage has to honour the same exclude globs
     # as the patch gate, or a PR comment shows two figures disagreeing by twenty points
@@ -1092,7 +1135,12 @@ def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int
             _write_json(args.quality_json_out, quality_to_dict(quality), "quality")
 
     summary = report_mod.render_summary(
-        decision, mode, broken=broken, ecosystems=ecosystems, sonar_message=sonar_message
+        decision,
+        mode,
+        broken=broken,
+        ecosystems=ecosystems,
+        sonar_message=sonar_message,
+        broken_in=tuple(eco.label for eco in collected.failed),
     )
     if quality is not None:
         summary = f"{summary}\n{report_mod.render_quality_summary(quality)}"

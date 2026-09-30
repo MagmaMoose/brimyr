@@ -48,6 +48,23 @@ of them (forced intent is never downgraded to a skip).
   Java (so a detection failure can name it), but the built-in command is `mvn`, so
   `_java_is_maven` requires a `pom.xml`. Gradle users pass `test_command` +
   `coverage_file`; the JaCoCo parser is shared, only the invocation differs.
+- **Go needs a `_test.go` that `./...` reaches**, not just `go.mod`: not vendored, not under
+  `testdata/` or a `_`/`.` directory (the go tool skips those), and not in a nested module,
+  where `./...` stops. MagmaMoose/cloudnative-vk was "no suite detected" because the row
+  did not exist.
+- **Below the root is a FALLBACK, never a second pass.** `_detect_nested` runs only when
+  the root detects nothing (dunmir: `agent/`, `backend/`, `frontend/`, nothing at the
+  root). Searching under a detected root would change verdicts that exist today: caldrith's
+  `console/backend` needs extras `uv run` does not sync and `console/frontend` has no test
+  files, so both would go red the day the release landed. Only `python`, `javascript`,
+  `go` are searched, because only their `confirm` proves a SUITE (Java's proves a pom,
+  .NET has none, shell's search is already repo-wide). A found directory is not
+  descended; fixtures, build output, vendored and hidden trees are never entered.
+- **`project_dir` is carried by the `Ecosystem`, and the label names it** (`Python in
+  backend/`), so every log line and the summary say which project broke. The runner runs
+  there and `_onto_repo` prefixes the report's paths ONLY when the file exists under the
+  project: an invented path matches nothing and silently leaves the denominator, and a
+  left-alone one still gets the suffix match.
 
 ## Dependency provisioning (`provision.py`)
 
@@ -72,8 +89,29 @@ of them (forced intent is never downgraded to a skip).
 - **`action.yml` installs Node when the runner has none.** Every JS row and a bats run
   without `bats` go through `npx`; self-hosted images need not ship Node, and `npx: not
   found` is a red gate on a green suite (MagmaMoose/mcp). Runs only when `node` is absent,
-  gated on a SUPERSET of detection (root `package.json` or any `.bats`): over-including
-  costs a download, under-including costs a red gate.
+  gated on a SUPERSET of detection (any `package.json` within the nested search's depth,
+  or any `.bats`): over-including costs a download, under-including costs a red gate.
+  `setup-go` follows the same rule off the shallowest `go.mod`. Both checks run under
+  `pipefail`: `find ... -print -quit | grep -q .`, never an early-exiting reader after a
+  writer that is still going, or a SIGPIPE flips the condition.
+- **A requirements file that pins EVERY requirement (`==`) and names every `[project]`
+  dependency is the lock** when there is no `uv.lock` (a pinned docs file is not): `uv run --no-project --with-requirements <file> ... python -m pytest`, from the
+  project directory, like the repo's own `pip install -r` job. dunmir's backend is why:
+  its `[project]` table leaves `fastapi` unpinned where requirements.txt pins the one
+  release that mounts all 24 routes, omits `pynacl`, and cannot be built at all (hatchling
+  rejects its `readme = "../README.md"`). Unpinned requirements keep project mode, so no
+  existing verdict moves. That environment gets `--with pip` (a pip job has pip; dunmir's
+  Lambda packaging tests shell out to it); a uv-native one does not, its CI has none.
+- **Plugins the pytest config needs are injected when nothing declares them.**
+  `asyncio_mode` without `pytest-asyncio` only WARNS, then fails every `async def` test.
+  "Declared" means what this run installs: project deps, the synced extras and groups,
+  or the requirements file. Conventional test extras (`test`/`tests`/`testing`/`dev`) and
+  groups (`test`/`tests`/`testing`) are passed to `uv run` when defined: brimyr's own
+  broker keeps pytest-asyncio in the `dev` extra.
+- **vitest needs a coverage provider it will not install itself.** `vitest run --coverage`
+  without `@vitest/coverage-v8` prints MISSING DEPENDENCY and writes nothing, a broken
+  run on a green suite. Installed `--no-save` at the INSTALLED vitest's version (another
+  version refuses to load) only when neither provider is declared or present.
 - **A `node --test` suite runs as `c8 npm test`, never as `node --test` rebuilt.**
   `--experimental-test-coverage` is refused in NODE_OPTIONS, and re-deriving the globs
   from the script string runs a suite the repo did not write. c8 covers every Node
@@ -118,6 +156,13 @@ returns a comfortable number over code nobody measured.
   having instrumented nothing, so `RunOutcome.ok` requires `bool(report)`, not
   `report is not None`. The usual JVM cause is a surefire `<argLine>` that overrides
   rather than appends `@{argLine}`, silently detaching the JaCoCo agent.
+- **A Go profile is blocks named by import path.** `runner._go_path_resolver` strips the
+  module path read from every `go.mod` (longest first, so a nested module claims its own
+  files); unresolved paths stay as written. Spans are trimmed past braces and whitespace
+  at both ends and blank / `//` lines dropped, using the source (`_source_reader`):
+  untrimmed, 16% of cloudnative-vk's in-block lines were a lone `}`, and the numbers stop
+  matching `go test -cover`. Zero-statement blocks are skipped. No source means the whole
+  span, never a dropped file.
 
 ## The CLI's own failures (`cli.py`, `git.py`, `local.py`)
 

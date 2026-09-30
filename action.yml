@@ -83,9 +83,13 @@ inputs:
   # ── Test run / coverage ──────────────────────────────────────────────────
   ecosystem:
     description: >-
-      Force ecosystem(s): comma-separated python|javascript|vitest|node-test|dotnet|java|shell
+      Force ecosystem(s): comma-separated python|javascript|vitest|node-test|dotnet|java|go|shell
       (default: auto-detect). Each one runs its OWN test command and the reports are
       merged, so `dotnet,shell` gates both halves of a repo whose scanners are bash.
+      Auto-detection looks at the repo root first; only when nothing is found there does
+      it look up to three directories down for Python, JavaScript and Go projects
+      (`backend/`, `services/api/`), and runs each from its own directory. A forced
+      ecosystem always runs at the root.
       `test_command` does not work that way: it replaces every ecosystem's command with
       one, which is how forcing a bats run used to cost a repo its .NET coverage.
       `shell` runs `bats` over the directories that hold the repo's `.bats` files, and
@@ -371,7 +375,15 @@ runs:
           case ",$forced," in
             *,javascript,*|*,vitest,*|*,node-test,*|*,shell,*) needed=true ;;
           esac
-        elif [ -f package.json ] || find . -path ./.git -prune -o -name '*.bats' \
+        # Any package.json down to the depth detect.py's nested search reaches (three
+        # directories, so four path components), not only the root's: a repo whose
+        # frontend lives in `frontend/` is detected there and runs through `npx` too.
+        # `-quit` is load-bearing under pipefail: without it `grep -q` can exit at the
+        # first match while find is still writing, find dies of SIGPIPE, and the whole
+        # condition reads as false.
+        elif find . -maxdepth 4 \( -name .git -o -name node_modules \) -prune -o \
+            -name package.json -print -quit | grep -q . \
+          || find . -path ./.git -prune -o -name '*.bats' \
             -not -path '*/node_modules/*' -print -quit | grep -q .; then
           needed=true
         fi
@@ -392,6 +404,51 @@ runs:
         # Off: brimyr runs `npm ci` itself, and setup-node's post step would otherwise save
         # an npm cache into the consumer's Actions cache quota.
         package-manager-cache: 'false'
+
+    # Go, on the same terms as Node. `go test` fetches its own modules, but the `go`
+    # binary is not on every self-hosted image, and without it a Go repo with a green
+    # suite gets a shell `127` and a broken run. Only when `go` is absent, so a consumer's
+    # own Go (and version) always wins; the version comes from the repo's own go.mod,
+    # which is also what `GOTOOLCHAIN` would have fetched. Same superset rule as Node:
+    # any go.mod down to the nested search's depth, or a forced `go`.
+    - name: Check for Go
+      id: go
+      if: ${{ inputs.provision == 'true' && inputs.test_command == '' && inputs.coverage_file == '' }}
+      shell: bash
+      env:
+        ECOSYSTEM_IN: ${{ inputs.ecosystem }}
+      run: |
+        set -euo pipefail
+        if command -v go >/dev/null 2>&1; then
+          echo "go already on PATH: $(command -v go)"
+          exit 0
+        fi
+        # The shallowest go.mod, so a repo with a root module gets the root's version.
+        # awk reads every line and picks it itself: a `sort | head -n 1` would close the
+        # pipe early, and under pipefail a SIGPIPE'd writer fails this assignment and
+        # with it the step.
+        mod="$(find . -maxdepth 4 \( -name .git -o -name node_modules -o -name vendor \
+                 -o -name testdata \) -prune -o -name go.mod -print \
+               | awk -F/ 'NR == 1 || NF < depth { depth = NF; path = $0 } END { print path }')"
+        needed=false
+        forced="$(printf '%s' "$ECOSYSTEM_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+        if [ -n "$forced" ]; then
+          case ",$forced," in *,go,*) needed=true ;; esac
+        elif [ -n "$mod" ]; then
+          needed=true
+        fi
+        echo "needed=$needed" >> "$GITHUB_OUTPUT"
+        echo "mod=$mod" >> "$GITHUB_OUTPUT"
+
+    - name: Provision Go
+      if: ${{ steps.go.outputs.needed == 'true' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ steps.go.outputs.mod == '' && 'stable' || '' }}
+        go-version-file: ${{ steps.go.outputs.mod }}
+        # Off for the reason setup-node's is: the post step would save a module cache
+        # into the consumer's Actions cache quota, for a gate that never asked for one.
+        cache: 'false'
 
     # Without this the Sonar leg is a silent no-op: nothing installs a scanner, so every
     # run reported "skipped (sonar-scanner not found on PATH)" while the build stayed

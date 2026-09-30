@@ -14,7 +14,7 @@ those. This module is **pure** — no file or path I/O beyond string normalizati
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from brimyr.coverage.diff import normalize_path
@@ -100,3 +100,20 @@ def merge_reports(reports: Iterable[CoverageReport]) -> CoverageReport:
             for line in file_cov.uncovered:
                 builder.record(file_cov.path, line, 0)
     return builder.build()
+
+
+def remap_paths(report: CoverageReport, rename: Callable[[str], str]) -> CoverageReport:
+    """Rename every file path through ``rename``, merging covered-wins where two collide.
+
+    For a report measured somewhere other than the repo root: a nested project's run
+    names its files relative to ITS directory, and the caller knows how to put that
+    back. Deciding how is not this module's business (it needs the filesystem), only
+    applying it without losing a line when two spellings turn out to be one file.
+    """
+    return merge_reports(
+        [
+            CoverageReport(
+                tuple(FileCoverage(rename(f.path), f.covered, f.uncovered) for f in report.files)
+            )
+        ]
+    )

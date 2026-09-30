@@ -35,11 +35,36 @@ half runs Chargate's net-new engine rather than growing its own
 | JavaScript / TypeScript | `package.json` | `jest`; `vitest run` when the repo uses vitest; `c8 npm test` when its `test` script runs `node --test` | lcov |
 | .NET | `*.sln`, `*.csproj`, `*.fsproj`, `*.vbproj` | `dotnet test --collect` | Cobertura |
 | Java / JVM | `pom.xml` | `mvn ... jacoco:prepare-agent test jacoco:report` | JaCoCo |
+| Go | `go.mod` plus a `_test.go` file | `go test -coverprofile=coverage.out ./...` | [Go coverage profile](go.md) |
 | Shell | a real `*.bats` file | `bats --recursive` over the directories holding them | Cobertura, [only if `kcov` is installed](shell.md) |
 
 A polyglot repo matches more than one, produces one report per language, and Brimyr
 merges them into a single number. Override any of it with `ecosystem`,
 `test_command`, or `coverage_file`. See [Action reference](action.md).
+
+### Projects in subdirectories
+
+Some repos keep nothing at the root: a `backend/` with its own `pyproject.toml`, a
+`frontend/` with its own `package.json`, an `agent/` beside them. When the root matches no
+ecosystem, Brimyr looks up to three directories down for Python, JavaScript / TypeScript
+and Go projects, and treats each one it finds as a project of its own:
+
+- its dependencies are installed and its tests run **from its own directory**, exactly as
+  a CI job with `working-directory: backend` would run them;
+- its report names files relative to that directory, and Brimyr puts the directory back
+  (`app/main.py` becomes `backend/app/main.py`), so two projects that both have a
+  `src/index.ts` stay two files;
+- the summary and every log line name it: `Python in backend/`,
+  `JavaScript / TypeScript (vitest) in frontend/`.
+
+The search is a fallback, not a second pass. A repo whose root is detected today is run
+exactly as before, sub-projects and all, so no existing verdict changes underneath it.
+It stops at a project it has found (a workspace whose root script runs every package is
+not run twice), and never enters `node_modules`, `vendor`, hidden directories, fixtures
+(`fixtures`, `testdata`) or build output (`dist`, `build`, `target`). Java and .NET are
+not searched for: their markers prove a build exists, not that anything tests it, and
+running `mvn test` in every library module would turn a green repo red. A forced
+`ecosystem` always runs at the root.
 
 The same run can also ship coverage to SonarQube for the long-run trend, non-blocking. It does
 that only when `sonar_url` and `sonar_token` are both set and a `sonar-scanner` is on PATH;
