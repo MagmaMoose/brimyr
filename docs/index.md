@@ -189,4 +189,4 @@ to switch this on across an estate. For eight repos in four languages:
 
 ## License
 
-MIT.
+Apache-2.0.

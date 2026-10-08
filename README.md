@@ -52,7 +52,7 @@ jobs:
 - **One consolidated PR comment** — updated in place, never stacked. Opt in with
   `pr_comment: 'true'`.
 - **Ships the trend** — optional SonarQube export, without letting it gate.
-- **Runs entirely on your runner** — free, MIT, no backend.
+- **Runs entirely on your runner** — free, Apache-2.0, no backend.
 
 > **Brimyr executes the pull request's own test code on the runner.** That is inherent
 > to running tests, and it is why the default workflow trigger is `pull_request` rather
