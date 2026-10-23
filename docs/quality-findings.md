@@ -17,8 +17,8 @@ MegaLinter's quality linters, then net-new classification against the PR diff, a
 its verdict into the same job summary and the same PR comment as coverage.
 **Report-only by default**; see [Start report-only](#start-report-only).
 
-`action.yml` pins `magmamoose/chargate@c4de649b91341eff4e1b7871af6db3bd0fcdf541`
-(v2.11.57), which carries the curated `quality` flavor added in v2.11.26, so
+`action.yml` pins `magmamoose/chargate@9bad7f3cf05a2a17cca334cdac1fa10d29f4dea7`
+(v2.11.68), which carries the curated `quality` flavor added in v2.11.26, so
 `quality: 'true'` is usable.
 
 !!! note "If you pin Brimyr below v1.9.1, leave `quality` off"
