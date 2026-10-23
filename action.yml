@@ -396,7 +396,7 @@ runs:
 
     - name: Provision Node
       if: ${{ steps.node.outputs.needed == 'true' }}
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         # The repo's own pin when it has one, otherwise the current LTS.
         node-version: ${{ steps.node.outputs.version_file == '' && 'lts/*' || '' }}
@@ -588,7 +588,7 @@ runs:
       id: quality
       if: ${{ inputs.quality == 'true' }}
       continue-on-error: true
-      uses: magmamoose/chargate@c4de649b91341eff4e1b7871af6db3bd0fcdf541 # v2.11.57
+      uses: magmamoose/chargate@9bad7f3cf05a2a17cca334cdac1fa10d29f4dea7 # v2.11.68
       with:
         checkout: 'false'
         setup_python: 'false'
@@ -756,7 +756,7 @@ runs:
       # carries it.
       if: ${{ always() && inputs.html_report == 'true' && steps.brimyr.outputs.html_dir != '' }}
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.html_artifact_name }}
         path: ${{ steps.brimyr.outputs.html_dir }}
@@ -765,7 +765,7 @@ runs:
     - name: Upload coverage JSON artifact
       if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.json_path != '' && hashFiles(steps.brimyr.outputs.json_path) != '' }}
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.json_artifact_name }}
         path: ${{ steps.brimyr.outputs.json_path }}
@@ -776,7 +776,7 @@ runs:
       # the real error under a second one.
       if: ${{ always() && inputs.emit_json_artifact == 'true' && steps.brimyr.outputs.quality_json_path != '' && hashFiles(steps.brimyr.outputs.quality_json_path) != '' }}
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.quality_json_artifact_name }}
         path: ${{ steps.brimyr.outputs.quality_json_path }}
