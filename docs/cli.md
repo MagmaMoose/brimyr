@@ -24,7 +24,7 @@ brimyr coverage --coverage-file coverage.xml --base "$BASE" \
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--coverage-file` | (required) | Coverage file `path[:format]` (`lcov`\|`cobertura`\|`jacoco`; inferred from the extension, and `.xml` is resolved by its root element). Repeatable. |
+| `--coverage-file` | (required) | Coverage file `path[:format]` (`lcov`\|`cobertura`\|`jacoco`\|`gocover`; inferred from the extension, `.xml` is resolved by its root element, and Go profiles are detected by their `mode:` first line). Repeatable. |
 | `--base` | (required) | Base ref/SHA (PR target). |
 | `--head` | `HEAD` | Head ref/SHA. |
 | `--repo` | `.` | Path to the git repository. |
