@@ -2,7 +2,7 @@
 
 <!-- sources: src/brimyr/detect.py, src/brimyr/sonar_dotnet.py, src/brimyr/coverage/cobertura.py -->
 
-Brimyr detects a .NET repo from `*.sln`, `*.csproj`, `*.fsproj` or `*.vbproj`, runs
+Brimyr detects a .NET repo from `*.sln`, `*.slnx`, `*.csproj`, `*.fsproj` or `*.vbproj`, runs
 
 ```bash
 dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
