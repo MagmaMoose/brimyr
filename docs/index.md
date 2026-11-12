@@ -33,7 +33,7 @@ half runs Chargate's net-new engine rather than growing its own
 | --- | --- | --- | --- |
 | Python | `pyproject.toml`, `setup.py`, `tox.ini` | `pytest --cov` | Cobertura |
 | JavaScript / TypeScript | `package.json` | `jest`; `vitest run` when the repo uses vitest; `c8 npm test` when its `test` script runs `node --test` | lcov |
-| .NET | `*.sln`, `*.csproj`, `*.fsproj`, `*.vbproj` | `dotnet test --collect` | Cobertura |
+| .NET | `*.sln`, `*.slnx`, `*.csproj`, `*.fsproj`, `*.vbproj` | `dotnet test --collect` | Cobertura |
 | Java / JVM | `pom.xml` | `mvn ... jacoco:prepare-agent test jacoco:report` | JaCoCo |
 | Go | `go.mod` plus a `_test.go` file | `go test -coverprofile=coverage.out ./...` | [Go coverage profile](go.md) |
 | Shell | a real `*.bats` file | `bats --recursive` over the directories holding them | Cobertura, [only if `kcov` is installed](shell.md) |

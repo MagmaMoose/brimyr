@@ -156,8 +156,8 @@ gates.
     [Quality findings](quality-findings.md#a-scan-that-completed-is-not-necessarily-a-full-one).
 
 !!! note "The pin has to carry the `quality` flavor"
-    `action.yml` pins `magmamoose/chargate@9bad7f3cf05a2a17cca334cdac1fa10d29f4dea7`
-    (v2.11.68), which does, so `quality: 'true'` is usable. v1.9.0 of this action
+    `action.yml` pins `magmamoose/chargate@753df5673aa274e87596c0b88159dc4b0cce33d1`
+    (v2.11.71), which does, so `quality: 'true'` is usable. v1.9.0 of this action
     pinned v2.11.25, which predates the flavor; on that pin the nested step fails and
     Brimyr reports a broken scan (exit `2`, `quality_gate_result` `error`) rather than
     a clean quality half. If you pin Brimyr below v1.9.1, leave `quality` off.
