@@ -46,9 +46,6 @@ class CoverageReport:
 
     files: tuple[FileCoverage, ...]
 
-    def as_dict(self) -> dict[str, FileCoverage]:
-        return {f.path: f for f in self.files}
-
     def get(self, path: str) -> FileCoverage | None:
         norm = normalize_path(path)
         for f in self.files:

@@ -13,8 +13,7 @@
 # is provisioned by caldrith from MagmaMoose/admin WITHOUT `create_only`, so it is
 # overwritten in place on the next sync: publish wiring added there survives until then
 # and then vanishes, taking the deployment path with it and leaving no trace in any pull
-# request. `major-tag.yml` is a repo-owned workflow reacting to a release for exactly the
-# same reason, and this file mirrors its shape.
+# request.
 #
 # WHAT THIS DOES NOT DO: deploy. Publishing an artifact and running it are deliberately
 # two decisions — see the job summary, which prints the one line a human then bumps.
@@ -84,8 +83,7 @@ jobs:
           # vX.Y.Z and nothing else. `broker_artifact_version` in the infra leaf is the bare
           # X.Y.Z, so anything whose shape is not that — a package-scoped tag, a `-rc1`
           # dispatched by hand (which carries no `prerelease` flag to catch it above) — has
-          # no unambiguous key and is skipped rather than guessed at. Same rule, same
-          # reason, as major-tag.yml.
+          # no unambiguous key and is skipped rather than guessed at.
           if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::notice::${RELEASE_TAG} is not a plain vX.Y.Z tag — nothing to publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"

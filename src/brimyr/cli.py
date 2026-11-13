@@ -1000,7 +1000,7 @@ def _run_flow(args: argparse.Namespace, mode: Mode) -> int:
     # stays a post-step.
     if _wants_dotnet_scanner(args):
         return _run_flow_wrapped(args, mode)
-    return _run_flow_inner(args, mode, sonar=None)
+    return _run_flow_inner(args, mode)
 
 
 def _run_flow_wrapped(args: argparse.Namespace, mode: Mode) -> int:
@@ -1019,7 +1019,7 @@ def _run_flow_wrapped(args: argparse.Namespace, mode: Mode) -> int:
             # an incremental build compiles nothing, so the analyzers `begin` injected
             # never run and `end` finds no analysis data.
             _run_sonar_build(args)
-        code = _run_flow_inner(args, mode, sonar=None)
+        code = _run_flow_inner(args, mode)
     message = outcome.message
     if message and not outcome.ok:
         _warn(f"SonarQube: {message}")
@@ -1039,8 +1039,7 @@ def _run_sonar_build(args: argparse.Namespace) -> None:
             )
 
 
-def _run_flow_inner(args: argparse.Namespace, mode: Mode, *, sonar: None) -> int:
-    del sonar
+def _run_flow_inner(args: argparse.Namespace, mode: Mode) -> int:
     collected = _collect_coverage(args)
     if isinstance(collected, int):
         return collected

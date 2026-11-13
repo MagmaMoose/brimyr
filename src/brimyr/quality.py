@@ -72,10 +72,6 @@ DEFAULT_FAIL_ON = "none"
 # silent-never-blocks hole this module refuses to have.
 _LEVEL_RANK = {"none": 0, "note": 1, "warning": 2, "error": 3}
 
-#: How chargate's severity bands line up with the SARIF levels this gate speaks, for
-#: anyone translating a `chargate fail_on` value. Documentation, not logic.
-BAND_EQUIVALENT = {"error": "high", "warning": "medium", "note": "low"}
-
 # Cap the listing so a first-run PR with 400 findings produces a readable summary
 # rather than a wall. The count is always stated in full; only the listing truncates.
 _MAX_LISTED = 20

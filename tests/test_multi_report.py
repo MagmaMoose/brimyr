@@ -21,7 +21,7 @@ import pytest
 
 from brimyr.coverage.diff import DiffIndex, FileDiff
 from brimyr.coverage.patch import compute_patch_coverage
-from brimyr.detect import ecosystem, locate_coverage_file, locate_coverage_files
+from brimyr.detect import ecosystem, locate_coverage_files
 from brimyr.runner import run_one
 
 _COBERTURA = """<?xml version="1.0"?>
@@ -143,7 +143,6 @@ def test_single_report_ecosystems_are_unaffected(tmp_path):
     found = locate_coverage_files(ecosystem("python"), tmp_path)
 
     assert [p.name for p in found] == ["coverage.xml"]  # nosec B101
-    assert locate_coverage_file(ecosystem("python"), tmp_path).name == "coverage.xml"  # nosec B101
 
 
 @pytest.mark.parametrize("count", [1, 2, 12])
