@@ -99,10 +99,6 @@ class PatchCoverage:
             return 100.0
         return 100.0 * self.covered_lines / self.total_lines
 
-    def files_below(self, threshold: float) -> tuple[PatchFileResult, ...]:
-        """Files whose own patch coverage is under ``threshold`` (for reporting)."""
-        return tuple(f for f in self.files if f.total > 0 and f.percent < threshold)
-
 
 def _index(
     report: CoverageReport, strip_prefixes: tuple[str, ...]

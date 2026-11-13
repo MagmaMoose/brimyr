@@ -68,10 +68,6 @@ class FileDiff:
     def is_deleted(self) -> bool:
         return self.status == "deleted"
 
-    @property
-    def has_line_info(self) -> bool:
-        return bool(self.added_ranges)
-
     def contains_line(self, line: int) -> bool:
         return any(start <= line <= end for start, end in self.added_ranges)
 
@@ -88,10 +84,6 @@ class DiffIndex:
     """All files changed between two commits, keyed by normalized head path."""
 
     files: tuple[FileDiff, ...]
-
-    def as_dict(self) -> dict[str, FileDiff]:
-        """Map normalized head path -> FileDiff (last one wins on duplicates)."""
-        return {f.path: f for f in self.files}
 
     def get(self, path: str) -> FileDiff | None:
         norm = normalize_path(path)

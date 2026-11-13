@@ -786,14 +786,3 @@ def locate_coverage_files(eco: Ecosystem, repo: str | Path = ".") -> list[Path]:
     # A pattern can overlap a literal path; keep first occurrence only.
     seen: set[Path] = set()
     return [p for p in found if not (p in seen or seen.add(p))]
-
-
-def locate_coverage_file(eco: Ecosystem, repo: str | Path = ".") -> Path | None:
-    """The first coverage file, or None. Prefer :func:`locate_coverage_files`.
-
-    Kept because a single path is genuinely the right answer for the single-report
-    ecosystems (pytest writes one coverage.xml, jest one lcov.info) and it keeps the
-    existing callers and tests meaningful.
-    """
-    files = locate_coverage_files(eco, repo)
-    return files[0] if files else None

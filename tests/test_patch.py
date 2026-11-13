@@ -86,8 +86,6 @@ def test_multi_file_aggregation(make_report):
     assert patch.total_lines == 4  # nosec B101
     assert patch.covered_lines == 2  # nosec B101
     assert patch.percent == 50.0  # nosec B101
-    below = patch.files_below(80.0)
-    assert {f.path for f in below} == {"b.py"}  # nosec B101
 
 
 def test_suffix_match_can_be_disabled(make_report):

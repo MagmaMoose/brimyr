@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from brimyr import __version__
@@ -82,7 +82,6 @@ class CommentResult:
     ok: bool
     message: str = ""
     action: str | None = None  # "created" | "updated" | "skipped"
-    errors: tuple[str, ...] = field(default_factory=tuple)
 
 
 class _GitHubAPI:
@@ -182,9 +181,9 @@ def post_pr_comment(
             action = "created"
     except urllib.error.HTTPError as exc:
         detail = _http_detail(exc)
-        return CommentResult(ok=False, message=f"PR comment failed: {detail}", errors=(detail,))
+        return CommentResult(ok=False, message=f"PR comment failed: {detail}")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         detail = str(exc)
-        return CommentResult(ok=False, message=f"PR comment failed: {detail}", errors=(detail,))
+        return CommentResult(ok=False, message=f"PR comment failed: {detail}")
 
     return CommentResult(ok=True, action=action, message=f"PR comment {action}")

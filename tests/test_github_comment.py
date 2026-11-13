@@ -117,7 +117,6 @@ def test_http_error_never_raises_and_never_gates():
 
     assert not result.ok  # nosec B101
     assert "403" in result.message  # nosec B101
-    assert result.errors  # nosec B101
 
 
 def test_transport_error_never_raises():
