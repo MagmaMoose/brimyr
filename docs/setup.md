@@ -195,7 +195,6 @@ reported on stderr and never changes the gate verdict, the same contract the
 SonarQube step follows. The broker is non-blocking too, and *silently* so: any
 problem with it costs the byline and nothing else.
 
-Both `pr_comment` and `token_broker_url` are inputs of the **composite action**;
-the reusable workflow does not forward them today. See
+Both `pr_comment` and `token_broker_url` are inputs of the **composite action**. See
 [PR comment](pr-comment.md) for what both blocks look like, how the two
 comment markers work, and the full list of broker failure messages.

@@ -123,7 +123,7 @@ purpose. Detection needs one of:
   (`testpaths`), since an explicit config wins outright, or set `ecosystem:` plus a
   `test_command:` that enters the directory.
 - `package.json` **plus** a jest/vitest config or a non-placeholder `test` script.
-- `pom.xml` for Java (`build.gradle` is recognised but not auto-run, see above).
+- `pom.xml` for Java (`build.gradle` and `build.gradle.kts` are recognised but not auto-run, see [Java / JVM](java.md#gradle)).
 - `go.mod` **plus** a `_test.go` file the root module's `./...` reaches (not under
   `vendor/`, `testdata/`, a `_`/`.` directory, or a nested module). See [Go](go.md).
 - `*.sln` / `*.slnx` / `*.csproj` in the repo root for .NET.
