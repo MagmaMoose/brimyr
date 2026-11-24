@@ -442,7 +442,7 @@ runs:
 
     - name: Provision Go
       if: ${{ steps.go.outputs.needed == 'true' }}
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version: ${{ steps.go.outputs.mod == '' && 'stable' || '' }}
         go-version-file: ${{ steps.go.outputs.mod }}
@@ -588,7 +588,7 @@ runs:
       id: quality
       if: ${{ inputs.quality == 'true' }}
       continue-on-error: true
-      uses: magmamoose/chargate@753df5673aa274e87596c0b88159dc4b0cce33d1 # v2.11.71
+      uses: magmamoose/chargate@21a876f1911604ec9b7515c2e4385a0344662bb0 # v2.11.73
       with:
         checkout: 'false'
         setup_python: 'false'
